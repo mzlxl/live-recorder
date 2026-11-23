@@ -126,3 +126,55 @@ def finish_recording(rec_id, file_path, duration, file_size, status="completed",
             "WHERE id=?",
             (now_str(), duration, file_path, file_size, status, error, rec_id),
         )
+
+
+def get_recording(rec_id):
+    with _conn() as c:
+        r = c.execute("SELECT * FROM recordings WHERE id=?", (rec_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def delete_recording(rec_id):
+    with _conn() as c:
+        c.execute("DELETE FROM recordings WHERE id=?", (rec_id,))
+
+
+def delete_recordings_by_task(task_id):
+    with _conn() as c:
+        c.execute("DELETE FROM recordings WHERE task_id=?", (task_id,))
+
+
+def dashboard_stats():
+    """看板统计：任务概览 + 产物概览 + 今日数据 + 最近产物。"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with _conn() as c:
+        task_total = c.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        task_enabled = c.execute("SELECT COUNT(*) FROM tasks WHERE enabled=1").fetchone()[0]
+        rec_total = c.execute("SELECT COUNT(*) FROM recordings").fetchone()[0]
+        rec_completed = c.execute("SELECT COUNT(*) FROM recordings WHERE status='completed'").fetchone()[0]
+        rec_failed = c.execute("SELECT COUNT(*) FROM recordings WHERE status='failed'").fetchone()[0]
+        total_duration = c.execute("SELECT COALESCE(SUM(duration),0) FROM recordings").fetchone()[0]
+        total_size = c.execute("SELECT COALESCE(SUM(file_size),0) FROM recordings").fetchone()[0]
+        today_count = c.execute(
+            "SELECT COUNT(*) FROM recordings WHERE start_time LIKE ?", (today + "%",)
+        ).fetchone()[0]
+        today_duration = c.execute(
+            "SELECT COALESCE(SUM(duration),0) FROM recordings WHERE start_time LIKE ?", (today + "%",)
+        ).fetchone()[0]
+        today_size = c.execute(
+            "SELECT COALESCE(SUM(file_size),0) FROM recordings WHERE start_time LIKE ?", (today + "%",)
+        ).fetchone()[0]
+    recent = list_recordings()[:10]
+    return {
+        "task_total": task_total,
+        "task_enabled": task_enabled,
+        "rec_total": rec_total,
+        "rec_completed": rec_completed,
+        "rec_failed": rec_failed,
+        "total_duration": total_duration,
+        "total_size": total_size,
+        "today_count": today_count,
+        "today_duration": today_duration,
+        "today_size": today_size,
+        "recent": recent,
+    }

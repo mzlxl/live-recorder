@@ -7,47 +7,74 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header>
-        <h1>直播录制系统</h1>
-        <div id="status-bar" class="status-bar">加载中…</div>
+    <header class="topbar">
+        <div class="brand">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="8 12 12 15 16 9"></polyline>
+            </svg>
+            <span>直播录制系统</span>
+        </div>
+        <nav class="menu">
+            <button class="tab active" data-tab="dashboard">录制看板</button>
+            <button class="tab" data-tab="tasks">任务列表</button>
+            <button class="tab" data-tab="recordings">录制产物</button>
+        </nav>
+        <div id="status-bar" class="statusbar">加载中…</div>
     </header>
 
     <main>
-        <section>
-            <div class="section-head">
-                <h2>录制任务</h2>
-                <button id="btn-add" class="btn primary">+ 新增任务</button>
+        <!-- 录制看板 -->
+        <section id="page-dashboard">
+            <div class="cards" id="stat-cards"></div>
+
+            <div class="panel">
+                <div class="panel-head">
+                    <h3>正在录制</h3>
+                </div>
+                <div id="running-list" class="running-list"></div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-head">
+                    <h3>今日产物</h3>
+                    <button class="btn ghost sm" onclick="switchTab('recordings')">查看全部</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>任务</th><th>开始</th><th>时长</th><th>大小</th><th>状态</th><th>操作</th></tr>
+                    </thead>
+                    <tbody id="dash-recent"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 任务列表 -->
+        <section id="page-tasks" class="hidden">
+            <div class="panel-head">
+                <h3>任务管理</h3>
+                <button class="btn primary" id="btn-add">+ 新增任务</button>
             </div>
 
             <div id="task-form" class="panel hidden">
                 <input type="hidden" id="f-id">
-                <div class="form-row">
-                    <label>任务名</label>
-                    <input id="f-name" placeholder="如：企智AI直播">
-                </div>
-                <div class="form-row">
-                    <label>平台</label>
-                    <select id="f-platform"></select>
-                </div>
-                <div class="form-row">
-                    <label>主播主页</label>
-                    <input id="f-home" placeholder="https://www.douyin.com/user/xxxx">
-                </div>
-                <div class="form-row">
-                    <label>主播名(可选)</label>
-                    <input id="f-anchor" placeholder="展示用">
-                </div>
-                <div class="form-row">
-                    <label>检查频率(cron)</label>
-                    <input id="f-cron" value="*/10 * * * *">
-                    <select id="f-cron-preset" onchange="onPreset(this)">
-                        <option value="">常用预设</option>
-                        <option value="*/5 * * * *">每 5 分钟</option>
-                        <option value="*/10 * * * *">每 10 分钟</option>
-                        <option value="*/30 * * * *">每 30 分钟</option>
-                        <option value="0 * * * *">每小时</option>
-                        <option value="0 9-22 * * *">每天 9-22 点整点</option>
-                    </select>
+                <div class="form-grid">
+                    <div class="form-row"><label>任务名 *</label><input id="f-name" placeholder="如：企智AI直播"></div>
+                    <div class="form-row"><label>平台</label><select id="f-platform"></select></div>
+                    <div class="form-row"><label>主播主页 *</label><input id="f-home" placeholder="https://www.douyin.com/user/xxxx"></div>
+                    <div class="form-row"><label>主播名</label><input id="f-anchor" placeholder="展示用（可选）"></div>
+                    <div class="form-row">
+                        <label>检查频率 *</label>
+                        <input id="f-cron" value="*/10 * * * *">
+                        <select id="f-cron-preset" onchange="onPreset(this)">
+                            <option value="">常用预设</option>
+                            <option value="*/5 * * * *">每 5 分钟</option>
+                            <option value="*/10 * * * *">每 10 分钟</option>
+                            <option value="*/30 * * * *">每 30 分钟</option>
+                            <option value="0 * * * *">每小时</option>
+                            <option value="0 9-22 * * *">每天 9-22 点整点</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="form-actions">
                     <button class="btn primary" onclick="saveTask()">保存</button>
@@ -59,26 +86,30 @@
                 <thead>
                     <tr>
                         <th>ID</th><th>任务名</th><th>平台</th><th>主播</th><th>检查频率</th>
-                        <th>启用</th><th>产物数</th><th>状态</th><th>操作</th>
+                        <th>状态</th><th>产物数</th><th>操作</th>
                     </tr>
                 </thead>
                 <tbody id="task-tbody"></tbody>
             </table>
         </section>
 
-        <section>
-            <div class="section-head">
-                <h2>录制产物</h2>
-                <select id="filter-task" onchange="loadRecordings()">
-                    <option value="">全部任务</option>
-                </select>
-                <button class="btn" onclick="loadRecordings()">刷新</button>
+        <!-- 录制产物 -->
+        <section id="page-recordings" class="hidden">
+            <div class="panel-head">
+                <h3>录制产物</h3>
+                <div class="toolbar">
+                    <select id="filter-task" onchange="loadRecordings()">
+                        <option value="">全部任务</option>
+                    </select>
+                    <button class="btn ghost" onclick="openFolder()">打开产物文件夹</button>
+                    <button class="btn ghost" onclick="loadRecordings()">刷新</button>
+                </div>
             </div>
             <table>
                 <thead>
                     <tr>
-                        <th>ID</th><th>任务</th><th>开始</th><th>结束</th>
-                        <th>时长</th><th>大小</th><th>状态</th><th>试听</th>
+                        <th>ID</th><th>任务</th><th>开始</th><th>结束</th><th>时长</th>
+                        <th>大小</th><th>状态</th><th>操作</th>
                     </tr>
                 </thead>
                 <tbody id="recording-tbody"></tbody>
@@ -86,6 +117,7 @@
         </section>
     </main>
 
+    <div id="toast" class="toast hidden"></div>
     <script src="app.js"></script>
 </body>
 </html>

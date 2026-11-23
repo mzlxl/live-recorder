@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
-from app import db, executor
+from app import db, executor, fsutils
 from app.scheduler import scheduler, reload_jobs
 from app.platforms import list_platforms
 from app.recorder import current_recorder, detect_ffmpeg
@@ -90,7 +90,16 @@ def api_update(task_id: int, task: TaskUpdate):
 
 
 @app.delete("/api/tasks/{task_id}")
-def api_delete(task_id: int):
+def api_delete(task_id: int, delete_files: bool = False):
+    if delete_files:
+        for r in db.list_recordings(task_id):
+            fp = r.get("file_path")
+            if fp and os.path.exists(fp):
+                try:
+                    os.remove(fp)
+                except OSError:
+                    pass
+    db.delete_recordings_by_task(task_id)
     db.delete_task(task_id)
     reload_jobs()
     return {"ok": True}
@@ -115,6 +124,54 @@ def api_recordings(task_id: Optional[int] = None):
         if r.get("file_path"):
             r["file_url"] = "/recordings/" + os.path.basename(r["file_path"])
     return recs
+
+
+@app.get("/api/dashboard")
+def api_dashboard():
+    stats = db.dashboard_stats()
+    running = [db.get_task(tid) for tid in executor._running]
+    running = [t for t in running if t]
+    stats["running_tasks"] = running
+    for r in stats["recent"]:
+        if r.get("file_path"):
+            r["file_url"] = "/recordings/" + os.path.basename(r["file_path"])
+    return stats
+
+
+@app.delete("/api/recordings/{rec_id}")
+def api_delete_recording(rec_id: int):
+    rec = db.get_recording(rec_id)
+    if not rec:
+        raise HTTPException(404, "产物不存在")
+    fp = rec.get("file_path")
+    if fp and os.path.exists(fp):
+        try:
+            os.remove(fp)
+        except OSError:
+            pass
+    db.delete_recording(rec_id)
+    return {"ok": True}
+
+
+@app.post("/api/recordings/{rec_id}/open")
+def api_open_recording(rec_id: int):
+    rec = db.get_recording(rec_id)
+    if not rec or not rec.get("file_path"):
+        raise HTTPException(404, "产物不存在或文件缺失")
+    return {"ok": fsutils.open_file(rec["file_path"])}
+
+
+@app.post("/api/recordings/{rec_id}/reveal")
+def api_reveal_recording(rec_id: int):
+    rec = db.get_recording(rec_id)
+    if not rec or not rec.get("file_path"):
+        raise HTTPException(404, "产物不存在或文件缺失")
+    return {"ok": fsutils.reveal_file(rec["file_path"])}
+
+
+@app.post("/api/recordings/folder")
+def api_open_folder():
+    return {"ok": fsutils.open_dir(config.STORAGE_DIR)}
 
 
 # ---------- 静态 ----------
