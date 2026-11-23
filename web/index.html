@@ -75,6 +75,12 @@
                             <option value="0 9-22 * * *">每天 9-22 点整点</option>
                         </select>
                     </div>
+                    <div class="form-row">
+                        <label>扫描时段</label>
+                        <input id="f-scan-start" placeholder="开始 HH:MM（留空不限）">
+                        <span>—</span>
+                        <input id="f-scan-end" placeholder="结束 HH:MM（留空不限）">
+                    </div>
                 </div>
                 <div class="form-actions">
                     <button class="btn primary" onclick="saveTask()">保存</button>
@@ -86,7 +92,7 @@
                 <thead>
                     <tr>
                         <th>ID</th><th>任务名</th><th>平台</th><th>主播</th><th>检查频率</th>
-                        <th>状态</th><th>产物数</th><th>操作</th>
+                        <th>扫描时段</th><th>状态</th><th>产物数</th><th>操作</th>
                     </tr>
                 </thead>
                 <tbody id="task-tbody"></tbody>

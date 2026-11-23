@@ -61,7 +61,7 @@ async function loadDashboard() {
         // 正在录制
         const run = d.running_tasks || [];
         $("#running-list").innerHTML = run.length
-            ? run.map(t => `<div class="running-item"><span class="pulse"></span><b>${t.name}</b><span class="tag off">${t.platform}</span><span>${t.anchor_name || ''}</span></div>`).join("")
+            ? run.map(t => `<div class="running-item"><span class="pulse"></span><b>${t.name}</b>${t.paused ? '<span class="tag off">已暂停</span>' : '<span class="tag recording">录制中</span>'}<span class="tag off">${t.platform}</span><span>${t.anchor_name || ''}</span></div>`).join("")
             : '<div class="empty">当前无正在录制的任务</div>';
 
         // 今日产物
@@ -114,25 +114,56 @@ async function loadPlatforms() {
 
 async function loadTasks() {
     const tasks = await api("/api/tasks");
-    $("#task-tbody").innerHTML = tasks.length ? tasks.map(t => `
-        <tr>
+    $("#task-tbody").innerHTML = tasks.length ? tasks.map(t => {
+        const range = (t.scan_start || t.scan_end) ? `${t.scan_start || "不限"} ~ ${t.scan_end || "不限"}` : "全天";
+        const st = t.running
+            ? (t.paused ? '<span class="tag off">已暂停</span>' : '<span class="tag recording">录制中</span>')
+            : `<span class="tag ${t.enabled ? 'on' : 'off'}">${t.enabled ? '启用' : '停用'}</span>`;
+        return `<tr>
             <td>${t.id}</td>
             <td><b>${t.name}</b></td>
             <td>${t.platform}</td>
             <td>${t.anchor_name || "-"}</td>
             <td class="mono">${t.cron}</td>
-            <td>${t.running ? '<span class="tag recording">录制中</span>' : `<span class="tag ${t.enabled ? 'on' : 'off'}">${t.enabled ? '启用' : '停用'}</span>`}</td>
+            <td class="mono">${range}</td>
+            <td>${st}</td>
             <td>${t.recording_count}</td>
-            <td>
-                <button class="btn sm" onclick="runTask(${t.id})">立即检查</button>
-                <button class="btn sm" onclick="editTask(${t.id})">编辑</button>
-                <button class="btn sm" onclick="toggleTask(${t.id}, ${t.enabled ? 0 : 1})">${t.enabled ? '停用' : '启用'}</button>
-                <button class="btn sm danger" onclick="delTask(${t.id}, ${t.recording_count})">删除</button>
-            </td>
-        </tr>`).join("") : '<tr><td colspan="8" class="empty">暂无任务，点右上角「新增任务」</td></tr>';
+            <td>${taskOps(t)}</td>
+        </tr>`;
+    }).join("") : '<tr><td colspan="9" class="empty">暂无任务，点右上角「新增任务」</td></tr>';
 
     const filter = $("#filter-task");
     filter.innerHTML = '<option value="">全部任务</option>' + tasks.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
+}
+
+function taskOps(t) {
+    if (t.running) {
+        const pb = t.paused
+            ? `<button class="btn sm" onclick="resumeTask(${t.id})">恢复</button>`
+            : `<button class="btn sm" onclick="pauseTask(${t.id})">暂停</button>`;
+        return `${pb} <button class="btn sm danger" onclick="stopTask(${t.id})">停止</button>`;
+    }
+    return `<button class="btn sm" onclick="runTask(${t.id})">立即检查</button>
+        <button class="btn sm" onclick="editTask(${t.id})">编辑</button>
+        <button class="btn sm" onclick="toggleTask(${t.id}, ${t.enabled ? 0 : 1})">${t.enabled ? '停用' : '启用'}</button>
+        <button class="btn sm danger" onclick="delTask(${t.id}, ${t.recording_count})">删除</button>`;
+}
+
+async function pauseTask(id) {
+    try { await api(`/api/tasks/${id}/pause`, { method: "POST" }); loadTasks(); loadDashboard(); toast("已暂停", "ok"); }
+    catch (e) { toast("暂停失败: " + e.message, "err"); }
+}
+async function resumeTask(id) {
+    try { await api(`/api/tasks/${id}/resume`, { method: "POST" }); loadTasks(); loadDashboard(); toast("已恢复", "ok"); }
+    catch (e) { toast("恢复失败: " + e.message, "err"); }
+}
+async function stopTask(id) {
+    if (!confirm("确认停止当前录制？已录部分会保留。")) return;
+    try {
+        await api(`/api/tasks/${id}/stop`, { method: "POST" });
+        toast("已请求停止，稍后结束", "ok");
+        setTimeout(() => { loadTasks(); loadDashboard(); loadRecordings(); }, 4000);
+    } catch (e) { toast("停止失败: " + e.message, "err"); }
 }
 
 function showForm() { $("#task-form").classList.remove("hidden"); }
@@ -151,6 +182,8 @@ async function editTask(id) {
     $("#f-home").value = t.anchor_home;
     $("#f-anchor").value = t.anchor_name || "";
     $("#f-cron").value = t.cron;
+    $("#f-scan-start").value = t.scan_start || "";
+    $("#f-scan-end").value = t.scan_end || "";
     showForm();
 }
 
@@ -162,6 +195,8 @@ async function saveTask() {
         anchor_home: $("#f-home").value.trim(),
         anchor_name: $("#f-anchor").value.trim(),
         cron: $("#f-cron").value.trim(),
+        scan_start: $("#f-scan-start").value.trim(),
+        scan_end: $("#f-scan-end").value.trim(),
     };
     if (!body.name || !body.anchor_home || !body.cron) { toast("任务名 / 主播主页 / 频率为必填", "err"); return; }
     try {

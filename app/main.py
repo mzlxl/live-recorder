@@ -35,6 +35,8 @@ class TaskIn(BaseModel):
     anchor_home: str
     anchor_name: str = ""
     cron: str = "*/10 * * * *"
+    scan_start: str = ""
+    scan_end: str = ""
 
 
 class TaskUpdate(BaseModel):
@@ -43,6 +45,8 @@ class TaskUpdate(BaseModel):
     anchor_name: Optional[str] = None
     cron: Optional[str] = None
     enabled: Optional[bool] = None
+    scan_start: Optional[str] = None
+    scan_end: Optional[str] = None
 
 
 # ---------- 元信息 ----------
@@ -68,13 +72,15 @@ def api_tasks():
     tasks = db.list_tasks()
     for t in tasks:
         t["running"] = executor.is_running(t["id"])
+        t["paused"] = executor.is_paused(t["id"])
         t["recording_count"] = len(db.list_recordings(t["id"]))
     return tasks
 
 
 @app.post("/api/tasks")
 def api_create(task: TaskIn):
-    tid = db.create_task(task.name, task.anchor_home, task.platform, task.anchor_name, task.cron)
+    tid = db.create_task(task.name, task.anchor_home, task.platform, task.anchor_name,
+                         task.cron, task.scan_start, task.scan_end)
     reload_jobs()
     return {"id": tid}
 
@@ -116,6 +122,27 @@ def api_run(task_id: int):
     return {"ok": True, "msg": "已触发，稍后查看产物"}
 
 
+@app.post("/api/tasks/{task_id}/pause")
+def api_pause(task_id: int):
+    if not executor.is_running(task_id):
+        raise HTTPException(400, "该任务未在录制中")
+    return {"ok": executor.pause_task(task_id)}
+
+
+@app.post("/api/tasks/{task_id}/resume")
+def api_resume(task_id: int):
+    if not executor.is_running(task_id):
+        raise HTTPException(400, "该任务未在录制中")
+    return {"ok": executor.resume_task(task_id)}
+
+
+@app.post("/api/tasks/{task_id}/stop")
+def api_stop(task_id: int):
+    if not executor.is_running(task_id):
+        raise HTTPException(400, "该任务未在录制中")
+    return {"ok": executor.stop_task(task_id)}
+
+
 # ---------- 产物 ----------
 @app.get("/api/recordings")
 def api_recordings(task_id: Optional[int] = None):
@@ -131,6 +158,8 @@ def api_dashboard():
     stats = db.dashboard_stats()
     running = [db.get_task(tid) for tid in executor._running]
     running = [t for t in running if t]
+    for t in running:
+        t["paused"] = executor.is_paused(t["id"])
     stats["running_tasks"] = running
     for r in stats["recent"]:
         if r.get("file_path"):

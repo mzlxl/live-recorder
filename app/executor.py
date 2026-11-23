@@ -2,8 +2,10 @@
 """录制执行器：核心流程「主播主页 → 检测开播 → 进直播间 → 系统音录制 → 下播自停」。
 
 系统音是全局共享资源，同一时刻只允许一个任务在录，加锁保证不串音。
+支持：暂停(暂停 ffmpeg 录音)/恢复/停止，以及按任务时间窗口扫描与录制。
 """
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -20,15 +22,78 @@ from app.recorder import current_recorder, detect_ffmpeg
 # 全局锁：系统音同一时刻只能录一路
 _lock = threading.Lock()
 _running = set()
+# task_id -> {"proc": ffmpeg, "paused": bool, "stop": bool, "rec_id": int, "out_path": str}
+_run_state = {}
 
 
 def is_running(task_id):
     return task_id in _running
 
 
+def is_paused(task_id):
+    s = _run_state.get(task_id)
+    return bool(s and s["paused"])
+
+
+def pause_task(task_id):
+    s = _run_state.get(task_id)
+    if not s or s["paused"]:
+        return False
+    s["paused"] = True
+    try:
+        s["proc"].send_signal(signal.SIGSTOP)
+    except Exception:
+        pass
+    return True
+
+
+def resume_task(task_id):
+    s = _run_state.get(task_id)
+    if not s or not s["paused"]:
+        return False
+    s["paused"] = False
+    try:
+        s["proc"].send_signal(signal.SIGCONT)
+    except Exception:
+        pass
+    return True
+
+
+def stop_task(task_id):
+    s = _run_state.get(task_id)
+    if not s:
+        return False
+    s["stop"] = True
+    if s["paused"]:  # 暂停中先恢复再停，让 ffmpeg 能正常退出
+        try:
+            s["proc"].send_signal(signal.SIGCONT)
+        except Exception:
+            pass
+        s["paused"] = False
+    return True
+
+
+def in_time_range(task):
+    """当前时间是否落在任务的扫描时间窗口内。空值表示不限。"""
+    ss = (task.get("scan_start") or "").strip()
+    se = (task.get("scan_end") or "").strip()
+    if not ss and not se:
+        return True
+    now = datetime.now().strftime("%H:%M")
+    if ss and se:
+        if ss <= se:
+            return ss <= now <= se
+        return now >= ss or now <= se  # 跨午夜
+    if ss:
+        return now >= ss
+    return now <= se
+
+
 def run_recording(task):
     """调度入口。返回结果描述字符串。"""
     task_id = task["id"]
+    if not in_time_range(task):
+        return "不在扫描时间范围内，跳过"
     if not _lock.acquire(blocking=False):
         return "已有其他任务在录制（系统音全局共享），本次跳过"
     _running.add(task_id)
@@ -36,6 +101,7 @@ def run_recording(task):
         return _do_record(task)
     finally:
         _running.discard(task_id)
+        _run_state.pop(task_id, None)
         _lock.release()
 
 
@@ -44,6 +110,7 @@ def _do_record(task):
     platform = get_platform(task["platform"])
     recorder = current_recorder()
     ffmpeg_bin = detect_ffmpeg()
+    start_ts = time.time()
 
     try:
         with sync_playwright() as p:
@@ -83,34 +150,47 @@ def _do_record(task):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            start_ts = time.time()
+            _run_state[task_id] = {
+                "proc": ffmpeg_proc, "paused": False, "stop": False,
+                "rec_id": rec_id, "out_path": out_path,
+            }
 
-            # 5) 轮询下播，直到直播结束或超时
+            # 5) 轮询：停止请求 / 超时 / 时间窗口结束 / 下播
             while ffmpeg_proc.poll() is None:
-                elapsed = time.time() - start_ts
-                if elapsed > config.MAX_RECORD_DURATION:
+                st = _run_state.get(task_id, {})
+                if st.get("stop"):
                     break
-                if not platform.live_still_on(page):
+                if time.time() - start_ts > config.MAX_RECORD_DURATION:
+                    break
+                if not in_time_range(task):
+                    break
+                if not st.get("paused") and not platform.live_still_on(page):
                     break
                 time.sleep(config.POLL_INTERVAL)
 
             # 6) 停止录制
-            ffmpeg_proc.terminate()
-            try:
-                ffmpeg_proc.wait(timeout=15)
-            except Exception:
-                ffmpeg_proc.kill()
+            if ffmpeg_proc.poll() is None:
+                ffmpeg_proc.terminate()
+                try:
+                    ffmpeg_proc.wait(timeout=15)
+                except Exception:
+                    ffmpeg_proc.kill()
 
             duration = int(time.time() - start_ts)
             size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
             if size == 0:
-                db.finish_recording(rec_id, out_path, duration, size, status="failed", error="产物为空")
+                db.finish_recording(rec_id, out_path, duration, size, status="failed",
+                                    error="产物为空（检查虚拟声卡 BlackHole 是否安装）")
                 browser.close()
                 return "录制产物为空"
-
             db.finish_recording(rec_id, out_path, duration, size, status="completed")
             browser.close()
             return f"录制完成 {duration}s / {size} 字节"
     except Exception as e:
-        db.create_recording(task_id)  # 记录失败
+        st = _run_state.pop(task_id, None)
+        if st and st.get("rec_id"):
+            fp = st.get("out_path", "")
+            size = os.path.getsize(fp) if fp and os.path.exists(fp) else 0
+            db.finish_recording(st["rec_id"], fp, int(time.time() - start_ts), size,
+                                status="failed", error=str(e))
         return f"录制异常: {e}"
