@@ -26,6 +26,9 @@ def current_recorder():
     if sysname == "Windows":
         from app.recorder.windows import WindowsRecorder
         return WindowsRecorder()
+    if sysname == "Linux":
+        from app.recorder.linux import LinuxRecorder
+        return LinuxRecorder()
     raise RuntimeError(f"暂不支持的操作系统: {sysname}")
 
 

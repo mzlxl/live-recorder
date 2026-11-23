@@ -115,8 +115,8 @@ def _do_record(task):
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                headless=False,
-                args=["--autoplay-policy=no-user-gesture-required"],
+                headless=config.HEADLESS,
+                args=config.BROWSER_ARGS,
             )
             ctx = browser.new_context(
                 user_agent=config.UA,
@@ -154,6 +154,7 @@ def _do_record(task):
                 "proc": ffmpeg_proc, "paused": False, "stop": False,
                 "rec_id": rec_id, "out_path": out_path,
             }
+            start_ts = time.time()  # 录制计时从 ffmpeg 启动后开始
 
             # 5) 轮询：停止请求 / 超时 / 时间窗口结束 / 下播
             while ffmpeg_proc.poll() is None:

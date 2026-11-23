@@ -55,6 +55,21 @@ brew install blackhole-2ch
 
 安装 VB-Audio Virtual Cable，声音设置里把「播放」默认设备设为 CABLE Input。
 
+### Linux：PulseAudio/PipeWire（轻量部署，headless 无需显示器）
+
+```bash
+# 1. 安装依赖
+sudo apt install -y ffmpeg pulseaudio
+python -m playwright install --with-deps chromium
+
+# 2. 创建虚拟 sink（虚拟声卡）
+pactl load-module module-null-sink sink_name=recording
+
+# 3. 启动（自动 headless 模式）
+export PULSE_SOURCE=recording.monitor
+python run.py
+```
+
 ## 启动
 
 ```bash
@@ -75,6 +90,12 @@ python run.py
 | RECORDER_PORT | 8000 | 服务端口 |
 | RECORDER_MAX_DURATION | 43200(12h) | 单次录制时长上限（秒） |
 | RECORDER_POLL_INTERVAL | 30 | 下播轮询间隔（秒） |
+| RECORDER_HEADLESS | Linux=1 其他=0 | 是否 headless（无头）运行浏览器 |
+| PULSE_SOURCE | recording.monitor | Linux 录制源（PulseAudio monitor） |
+
+## 架构说明（轻量）
+
+单进程架构：`python run.py` 一个 uvicorn 进程同时提供 REST API、前端静态页、定时调度与录制执行，无需前后端分离、无需数据库服务（SQLite 单文件）、无需消息队列。部署仅需 Python + ffmpeg + chromium + 一个虚拟声卡驱动。
 
 ## 说明与风险
 
