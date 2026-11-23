@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+apscheduler
+playwright==1.40.0
