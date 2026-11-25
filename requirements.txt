@@ -2,3 +2,4 @@ fastapi
 uvicorn
 apscheduler
 playwright==1.40.0
+soundcard==0.4.6

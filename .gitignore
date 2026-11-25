@@ -7,6 +7,9 @@ __pycache__/
 .venv/
 venv/
 
+# Playwright 本地浏览器
+.pw-browsers/
+
 # 运行时数据（数据库 + 录制产物）
 storage/
 *.log

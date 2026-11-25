@@ -4,10 +4,10 @@
 
 ## 特性
 
-- 任务配置页：主播主页 + 定时检查频率（cron），启用/停用
+- 任务配置页：主播主页 + 检查频率下拉（5/10/15/20/30/45/60/90/120 分钟）+ 扫描时段（时分、可跨天），启用/停用
 - 产物汇总：每个任务对应产物列表，在线试听、下载
 - 平台抽象：当前支持抖音，可扩展 B站/快手等
-- 系统音录制：macOS=BlackHole，Windows=VB-Cable，纯浏览器自动化，不碰流
+- 系统音录制：macOS=BlackHole / 浏览器内采集，Windows=VB-Cable / WASAPI 回环 / 浏览器内采集，Linux=PulseAudio monitor / 浏览器内采集；纯浏览器自动化，不碰流
 
 ## 目录结构
 
@@ -51,9 +51,15 @@ brew install blackhole-2ch
 # 把系统输出切到该多输出设备（这样你也能同时听到直播声音）
 ```
 
-### Windows：VB-Cable
+### Windows：声卡（可选）
 
-安装 VB-Audio Virtual Cable，声音设置里把「播放」默认设备设为 CABLE Input。
+未安装 VB-Cable 也能录制：系统会自动用 Windows WASAPI 回环采集默认扬声器的系统输出；
+若回环不可用则退回浏览器内音频采集。已安装 VB-Audio Virtual Cable 时，把「播放」默认设备设为 CABLE Input 即自动切换为虚拟声卡采集。
+
+macOS/Linux 未配置虚拟声卡时会自动使用浏览器内音频采集，无需额外驱动。
+录制优先使用系统 Chrome/Edge（Playwright 自带 Chromium 缺少 H.264/AAC 解码器，直播画面会停在「加载中」）：
+Windows 自动探测常见安装路径，macOS 探测 `/Applications`，Linux 通过 `PATH` 探测 `google-chrome`/`chromium` 等。
+可用 `RECORDER_BROWSER` 指定浏览器路径或 PATH 中的命令名。
 
 ### Linux：PulseAudio/PipeWire（轻量部署，headless 无需显示器）
 
@@ -79,9 +85,16 @@ python run.py
 
 ## 使用
 
-1. 页面「新增任务」：填主播主页（抖音主页形如 `https://www.douyin.com/user/MS4w...`）、检查频率（cron）
+1. 页面「新增任务」：填主播主页（抖音主页形如 `https://www.douyin.com/user/MS4w...`）、检查频率（5~120 分钟下拉）、扫描时段（仅时分，结束早于开始即跨至次日）
 2. 系统按频率检查主页是否开播，开播即进入直播间录制，下播自动停止
 3. 「产物」区按任务查看录制结果，在线试听/下载
+
+## 自动化验证
+
+```bash
+python verify_recording.py            # 两种采集模式：采集 → 转码 → 解码/音量/播放检查
+python verify_recording.py --file 路径 # 只验证某个产物能否正常打开播放
+```
 
 ## 关键配置（config.py / 环境变量）
 
@@ -91,6 +104,10 @@ python run.py
 | RECORDER_MAX_DURATION | 43200(12h) | 单次录制时长上限（秒） |
 | RECORDER_POLL_INTERVAL | 30 | 下播轮询间隔（秒） |
 | RECORDER_HEADLESS | Linux=1 其他=0 | 是否 headless（无头）运行浏览器 |
+| RECORDER_FFMPEG | 自动探测 | ffmpeg 路径，PATH 中找不到时手动指定 |
+| RECORDER_BROWSER | 自动探测 | 浏览器可执行文件路径或 PATH 中的命令名（系统 Chrome/Edge 优先） |
+| VBCABLE_DEVICE | 自动探测 | Windows 采集设备名，如 `CABLE Output (VB-Audio Virtual Cable)`，自动匹配失败时手动指定 |
+| BLACKHOLE_DEVICE | none:BlackHole 2ch | macOS 采集设备名（avfoundation 格式） |
 | PULSE_SOURCE | recording.monitor | Linux 录制源（PulseAudio monitor） |
 
 ## 架构说明（轻量）

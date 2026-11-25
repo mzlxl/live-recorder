@@ -29,6 +29,7 @@ def init_db():
                 anchor_home TEXT NOT NULL,
                 anchor_name TEXT DEFAULT '',
                 cron TEXT NOT NULL DEFAULT '*/10 * * * *',
+                interval_minutes INTEGER,
                 enabled INTEGER DEFAULT 1,
                 scan_start TEXT DEFAULT '',
                 scan_end TEXT DEFAULT '',
@@ -50,12 +51,14 @@ def init_db():
             );
             """
         )
-        # 迁移：旧表补 scan_start/scan_end 列
+        # 迁移：旧表补 scan_start/scan_end/interval_minutes 列
         cols = [r[1] for r in c.execute("PRAGMA table_info(tasks)").fetchall()]
         if "scan_start" not in cols:
             c.execute("ALTER TABLE tasks ADD COLUMN scan_start TEXT DEFAULT ''")
         if "scan_end" not in cols:
             c.execute("ALTER TABLE tasks ADD COLUMN scan_end TEXT DEFAULT ''")
+        if "interval_minutes" not in cols:
+            c.execute("ALTER TABLE tasks ADD COLUMN interval_minutes INTEGER")
 
 
 def now_str():
@@ -75,18 +78,20 @@ def get_task(task_id):
     return dict(r) if r else None
 
 
-def create_task(name, anchor_home, platform="douyin", anchor_name="", cron="*/10 * * * *", scan_start="", scan_end=""):
+def create_task(name, anchor_home, platform="douyin", anchor_name="", cron="*/10 * * * *",
+                scan_start="", scan_end="", interval_minutes=None):
     with _conn() as c:
         cur = c.execute(
-            "INSERT INTO tasks(name,platform,anchor_home,anchor_name,cron,enabled,scan_start,scan_end) "
-            "VALUES(?,?,?,?,?,1,?,?)",
-            (name, platform, anchor_home, anchor_name, cron, scan_start, scan_end),
+            "INSERT INTO tasks(name,platform,anchor_home,anchor_name,cron,interval_minutes,enabled,scan_start,scan_end) "
+            "VALUES(?,?,?,?,?,?,1,?,?)",
+            (name, platform, anchor_home, anchor_name, cron, interval_minutes, scan_start, scan_end),
         )
         return cur.lastrowid
 
 
 def update_task(task_id, **fields):
-    allowed = {"name", "platform", "anchor_home", "anchor_name", "cron", "enabled", "scan_start", "scan_end"}
+    allowed = {"name", "platform", "anchor_home", "anchor_name", "cron", "interval_minutes",
+               "enabled", "scan_start", "scan_end"}
     sets, vals = [], []
     for k, v in fields.items():
         if k in allowed:

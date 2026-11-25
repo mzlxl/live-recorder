@@ -1,6 +1,141 @@
 // 前端逻辑：看板 / 任务 / 产物 三页管理
 const $ = (s) => document.querySelector(s);
 
+const INTERVALS = [5, 10, 15, 20, 30, 45, 60, 90, 120];
+const allSelects = [];
+const CHEVRON = '<svg class="ui-select-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7.5 10 12.5 15 7.5"/></svg>';
+const CHECK = '<svg class="option-check" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3.2 3.2L13 5"/></svg>';
+const ICONS = {
+    scan: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 6.6A5.3 5.3 0 1 0 13 10"/><path d="M13.4 2.6v4h-4"/><circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none"/></svg>',
+    play: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg>',
+    edit: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 2.8 13.2 5 5.7 12.5H3.5v-2.2z"/><path d="m9.7 4.1 2.2 2.2"/></svg>',
+    pause: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="3" width="3" height="10" rx="1"/><rect x="9" y="3" width="3" height="10" rx="1"/></svg>',
+    resume: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg>',
+    stop: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>',
+    power: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 2v5"/><path d="M4.7 4.6a5 5 0 1 0 6.6 0"/></svg>',
+    powerOff: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 2v5"/><path d="M4.7 4.6a5 5 0 1 0 6.6 0"/><path d="m3 13 10-10"/></svg>',
+    trash: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8h4.8l.6-8M7 7v3.5M9 7v3.5"/></svg>',
+    folder: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5h4l1.3 1.6H14v6.4H2z"/></svg>',
+    file: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>',
+};
+
+function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+function escapeJs(s) { return String(s ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'"); }
+function statusTag(status) {
+    const map = { completed: ["done", "已完成"], failed: ["failed", "失败"], recording: ["recording", "录制中"] };
+    const [tone, label] = map[status] || ["off", status || "未知"];
+    return `<span class="tag ${tone}">${escapeHtml(label)}</span>`;
+}
+function pad2(n) { return String(n).padStart(2, "0"); }
+function actionBtn(label, onclick, tone, icon) {
+    return `<button class="btn sm ${tone || ""}" title="${escapeHtml(label)}" onclick="${onclick}">${icon ? ICONS[icon] : ""}<span>${label}</span></button>`;
+}
+
+// ---------- 统一下拉组件 ----------
+function closeAllSelects() { allSelects.forEach(s => s.close()); }
+
+function createSelect(root, options, value, opts = {}) {
+    if (typeof root === "string") root = $(root);
+    const placeholder = opts.placeholder || "请选择";
+    root.classList.add("ui-select");
+    root.innerHTML = `
+        <button type="button" class="ui-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+            <span class="ui-select-value"></span>${CHEVRON}
+        </button>
+        <div class="ui-select-menu" role="listbox"></div>`;
+    const trigger = root.querySelector(".ui-select-trigger");
+    const menu = root.querySelector(".ui-select-menu");
+    const labelEl = root.querySelector(".ui-select-value");
+    const state = { options: [], value: "" };
+
+    function normalize(list) {
+        return list.map(o => typeof o === "object"
+            ? { value: String(o.value ?? ""), label: String(o.label ?? "") }
+            : { value: String(o), label: String(o) });
+    }
+    function renderMenu() {
+        menu.innerHTML = state.options.length
+            ? state.options.map(o => `<button type="button" class="ui-option ${o.value === state.value ? "selected" : ""}" role="option" data-value="${escapeHtml(o.value)}" data-label="${escapeHtml(o.label)}"><span>${escapeHtml(o.label)}</span>${o.value === state.value ? CHECK : ""}</button>`).join("")
+            : '<div class="ui-option is-empty">暂无选项</div>';
+    }
+    function setValue(v, silent = false) {
+        state.value = String(v ?? "");
+        const current = state.options.find(o => o.value === state.value);
+        labelEl.textContent = current ? current.label : placeholder;
+        trigger.classList.toggle("is-placeholder", !current);
+        renderMenu();
+        if (!silent && typeof opts.onChange === "function") opts.onChange(state.value);
+    }
+    function setOptions(list, v, silent = true) {
+        state.options = normalize(list);
+        const next = v === undefined ? state.value : String(v ?? "");
+        setValue(state.options.some(o => o.value === next) ? next : "", silent);
+    }
+    function close() {
+        root.classList.remove("is-open");
+        trigger.setAttribute("aria-expanded", "false");
+    }
+    function open() {
+        closeAllSelects();
+        root.classList.add("is-open");
+        trigger.setAttribute("aria-expanded", "true");
+        const active = menu.querySelector(".ui-option.selected");
+        if (active) active.scrollIntoView({ block: "nearest" });
+    }
+    trigger.addEventListener("click", e => {
+        e.stopPropagation();
+        root.classList.contains("is-open") ? close() : open();
+    });
+    menu.addEventListener("click", e => {
+        const item = e.target.closest(".ui-option[data-value]");
+        if (!item) return;
+        setValue(item.dataset.value);
+        close();
+    });
+    document.addEventListener("click", e => { if (!root.contains(e.target)) close(); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+
+    const api = {
+        root, open, close, setOptions, setValue,
+        getValue: () => state.value,
+        getLabel: () => (state.options.find(o => o.value === state.value) || {}).label || "",
+    };
+    root._uiSelect = api;
+    allSelects.push(api);
+    setOptions(options, value, true);
+    return api;
+}
+function uiValue(selector) { const el = typeof selector === "string" ? $(selector) : selector; return el && el._uiSelect ? el._uiSelect.getValue() : ""; }
+function uiSet(selector, value, silent) { const el = typeof selector === "string" ? $(selector) : selector; if (el && el._uiSelect) el._uiSelect.setValue(value, silent); }
+
+function mountTimePicker(selector, initial = "") {
+    const root = $(selector);
+    root.classList.add("time-picker");
+    root.innerHTML = '<div class="time-pair"><div class="time-part hour"></div><span class="time-colon">:</span><div class="time-part minute"></div></div>';
+    const unlimited = { value: "", label: "不限" };
+    const hours = [unlimited, ...Array.from({ length: 24 }, (_, i) => ({ value: pad2(i), label: pad2(i) }))];
+    const minutes = [unlimited, ...Array.from({ length: 60 }, (_, i) => ({ value: pad2(i), label: pad2(i) }))];
+    const [h = "", m = ""] = (initial || "").split(":");
+    createSelect(root.querySelector(".hour"), hours, h, { placeholder: "时" });
+    createSelect(root.querySelector(".minute"), minutes, m, { placeholder: "分" });
+    return {
+        read() {
+            const hh = uiValue(root.querySelector(".hour"));
+            const mm = uiValue(root.querySelector(".minute"));
+            if (!hh && !mm) return { ok: true, value: "" };
+            if (hh && mm) return { ok: true, value: `${hh}:${mm}` };
+            return { ok: false, value: "" };
+        },
+        set(value) {
+            const [vh = "", vm = ""] = (value || "").split(":");
+            uiSet(root.querySelector(".hour"), vh, true);
+            uiSet(root.querySelector(".minute"), vm, true);
+        },
+    };
+}
+
 // ---------- 工具 ----------
 function fmtSize(b) { if (!b) return "-"; if (b < 1024) return b + "B"; if (b < 1048576) return (b / 1024).toFixed(1) + "KB"; return (b / 1048576).toFixed(1) + "MB"; }
 function fmtDur(s) { if (!s) return "-"; const m = Math.floor(s / 60), r = s % 60; if (m < 60) return m + "m" + r + "s"; const h = Math.floor(m / 60); return h + "h" + (m % 60) + "m"; }
@@ -18,7 +153,11 @@ function toast(msg, type) {
 
 async function api(url, opt) {
     const r = await fetch(url, opt);
-    if (!r.ok) throw new Error(await r.text());
+    if (!r.ok) {
+        let msg = await r.text();
+        try { const j = JSON.parse(msg); msg = j.detail || j.message || msg; } catch (e) { /* 保留原始响应 */ }
+        throw new Error(msg);
+    }
     return r.json();
 }
 
@@ -38,7 +177,9 @@ async function loadStatus() {
     try {
         const s = await api("/api/status");
         const ready = s.recorder_device_ready;
-        $("#status-bar").innerHTML = `<span class="dot ${ready ? 'ok' : 'bad'}"></span> 声卡${ready ? '就绪' : '未就绪'}` +
+        const label = s.capture_mode === "browser" ? "浏览器音频采集"
+            : (s.capture_mode === "loopback" ? "系统音频回环" : "声卡");
+        $("#status-bar").innerHTML = `<span class="dot ${ready ? 'ok' : 'bad'}" title="${escapeHtml(s.device_hint || "")}"></span> ${label}${ready ? '就绪' : '未就绪'}` +
             (s.running.length ? ` · <span style="color:#f87171">录制中 ${s.running.length}</span>` : "");
     } catch (e) { $("#status-bar").innerHTML = '<span class="dot bad"></span> 服务未连接'; }
 }
@@ -61,7 +202,12 @@ async function loadDashboard() {
         // 正在录制
         const run = d.running_tasks || [];
         $("#running-list").innerHTML = run.length
-            ? run.map(t => `<div class="running-item"><span class="pulse"></span><b>${t.name}</b>${t.paused ? '<span class="tag off">已暂停</span>' : '<span class="tag recording">录制中</span>'}<span class="tag off">${t.platform}</span><span>${t.anchor_name || ''}</span></div>`).join("")
+            ? run.map(t => {
+                const controls = t.paused
+                    ? actionBtn("恢复", `resumeTask(${t.id})`, "btn-resume", "resume") + actionBtn("停止", `stopTask(${t.id})`, "danger btn-stop", "stop")
+                    : actionBtn("暂停", `pauseTask(${t.id})`, "btn-pause", "pause") + actionBtn("停止", `stopTask(${t.id})`, "danger btn-stop", "stop");
+                return `<div class="running-item"><span class="pulse"></span><b>${escapeHtml(t.name)}</b>${t.paused ? '<span class="tag off">已暂停</span>' : '<span class="tag recording">录制中</span>'}<span class="tag off">${escapeHtml(t.platform)}</span><span>${escapeHtml(t.anchor_name || "")}</span><span class="running-actions">${controls}</span></div>`;
+            }).join("")
             : '<div class="empty">当前无正在录制的任务</div>';
 
         // 今日产物
@@ -73,26 +219,27 @@ async function loadDashboard() {
 }
 
 function recRow(r) {
-    const tag = r.status === "completed" ? "done" : (r.status === "failed" ? "failed" : "recording");
     return `<tr>
-        <td>任务#${r.task_id}</td>
+        <td><span class="task-ref">任务 #${r.task_id}</span></td>
         <td class="mono">${r.start_time || "-"}</td>
         <td class="mono">${fmtDur(r.duration)}</td>
         <td class="mono">${fmtSize(r.file_size)}</td>
-        <td><span class="tag ${tag}">${r.status}</span></td>
-        <td>${recOps(r)}</td>
+        <td>${statusTag(r.status)}</td>
+        <td><div class="row-actions">${recOps(r)}</div></td>
     </tr>`;
 }
 
 function recOps(r) {
     const btns = [];
-    if (r.file_url) btns.push(`<button class="btn ghost sm" onclick="playRec('${r.file_url}')">试听</button>`);
-    if (r.id) {
-        btns.push(`<button class="btn sm" onclick="openRec(${r.id})">打开</button>`);
-        btns.push(`<button class="btn sm" onclick="revealRec(${r.id})">进文件夹</button>`);
-        btns.push(`<button class="btn sm danger" onclick="delRec(${r.id})">删除</button>`);
+    if (r.file_exists && r.file_url) {
+        btns.push(actionBtn("试听", `playRec('${escapeJs(r.file_url)}')`, "ghost btn-listen", "play"));
+        btns.push(actionBtn("打开", `openRec(${r.id})`, "btn-open", "file"));
+        btns.push(actionBtn("进文件夹", `revealRec(${r.id})`, "btn-open", "folder"));
+    } else if (r.id) {
+        btns.push('<span class="file-missing" title="录制失败或文件已被删除">文件缺失</span>');
     }
-    return btns.join(" ") || "-";
+    if (r.id) btns.push(actionBtn("删除", `delRec(${r.id})`, "danger btn-delete", "trash"));
+    return btns.join("") || '<span class="muted">-</span>';
 }
 
 // 试听：用浮动 audio 播放
@@ -107,46 +254,83 @@ function playRec(url) {
 }
 
 // ---------- 任务 ----------
+let formFrequency = null;
+let formCron = "";
+let timePickers = {};
+
+function minutesFromCron(cron, interval) {
+    if (INTERVALS.includes(Number(interval))) return Number(interval);
+    const c = (cron || "").trim();
+    const step = c.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
+    if (step && INTERVALS.includes(Number(step[1]))) return Number(step[1]);
+    if (/^0\s+\*\s+\*\s+\*\s+\*$/.test(c)) return 60;
+    if (/^0\s+\*\/2\s+\*\s+\*\s+\*$/.test(c)) return 120;
+    return null;
+}
+function cronFromMinutes(n) {
+    if (n === 60) return "0 * * * *";
+    if (n === 120) return "0 */2 * * *";
+    return `*/${n} * * * *`;
+}
+function frequencyText(t) {
+    const m = minutesFromCron(t.cron, t.interval_minutes);
+    return m ? `<span class="freq-pill">每 ${m} 分钟</span>` : `<span class="muted mono" title="${escapeHtml(t.cron)}">自定义 cron</span>`;
+}
+function scanRangeText(t) {
+    const s = t.scan_start || "", e = t.scan_end || "";
+    if (!s && !e) return '<span class="muted">全天</span>';
+    const cross = s && e && s > e;
+    return `<span class="mono">${s || "不限"}</span><span class="range-arrow">→</span><span class="mono">${e || "不限"}</span>${cross ? '<span class="tag tiny next-day">次日</span>' : ""}`;
+}
+
+function initSelects() {
+    createSelect("#f-platform", [], "", { placeholder: "选择平台" });
+    createSelect("#f-frequency", [{ value: "", label: "请选择频率" }, ...INTERVALS.map(n => ({ value: String(n), label: `每 ${n} 分钟` }))], "10", { placeholder: "选择频率" });
+    timePickers = { start: mountTimePicker("#f-scan-start"), end: mountTimePicker("#f-scan-end") };
+    createSelect("#filter-task", [{ value: "", label: "全部任务" }], "", { placeholder: "全部任务", onChange: loadRecordings });
+}
+
 async function loadPlatforms() {
     const list = await api("/api/platforms");
-    $("#f-platform").innerHTML = list.map(p => `<option value="${p.name}">${p.label}</option>`).join("");
+    const options = list.map(p => ({ value: p.name, label: p.label }));
+    const current = uiValue("#f-platform") || (options[0] || {}).value || "";
+    $("#f-platform")._uiSelect.setOptions(options, current, true);
 }
 
 async function loadTasks() {
     const tasks = await api("/api/tasks");
     $("#task-tbody").innerHTML = tasks.length ? tasks.map(t => {
-        const range = (t.scan_start || t.scan_end) ? `${t.scan_start || "不限"} ~ ${t.scan_end || "不限"}` : "全天";
         const st = t.running
             ? (t.paused ? '<span class="tag off">已暂停</span>' : '<span class="tag recording">录制中</span>')
             : `<span class="tag ${t.enabled ? 'on' : 'off'}">${t.enabled ? '启用' : '停用'}</span>`;
         return `<tr>
-            <td>${t.id}</td>
-            <td><b>${t.name}</b></td>
-            <td>${t.platform}</td>
-            <td>${t.anchor_name || "-"}</td>
-            <td class="mono">${t.cron}</td>
-            <td class="mono">${range}</td>
+            <td class="mono muted">${t.id}</td>
+            <td><div class="cell-primary">${escapeHtml(t.name)}</div><div class="cell-sub">${escapeHtml(t.anchor_home)}</div></td>
+            <td><span class="tag off">${escapeHtml(t.platform)}</span></td>
+            <td>${escapeHtml(t.anchor_name || "-")}</td>
+            <td>${frequencyText(t)}</td>
+            <td>${scanRangeText(t)}</td>
             <td>${st}</td>
-            <td>${t.recording_count}</td>
-            <td>${taskOps(t)}</td>
+            <td><span class="count-badge">${t.recording_count}</span></td>
+            <td><div class="row-actions">${taskOps(t)}</div></td>
         </tr>`;
     }).join("") : '<tr><td colspan="9" class="empty">暂无任务，点右上角「新增任务」</td></tr>';
 
-    const filter = $("#filter-task");
-    filter.innerHTML = '<option value="">全部任务</option>' + tasks.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
+    const options = [{ value: "", label: "全部任务" }, ...tasks.map(t => ({ value: String(t.id), label: t.name }))];
+    $("#filter-task")._uiSelect.setOptions(options, uiValue("#filter-task"), true);
 }
 
 function taskOps(t) {
     if (t.running) {
-        const pb = t.paused
-            ? `<button class="btn sm" onclick="resumeTask(${t.id})">恢复</button>`
-            : `<button class="btn sm" onclick="pauseTask(${t.id})">暂停</button>`;
-        return `${pb} <button class="btn sm danger" onclick="stopTask(${t.id})">停止</button>`;
+        return t.paused
+            ? actionBtn("恢复", `resumeTask(${t.id})`, "btn-resume", "resume") + actionBtn("停止", `stopTask(${t.id})`, "danger btn-stop", "stop")
+            : actionBtn("暂停", `pauseTask(${t.id})`, "btn-pause", "pause") + actionBtn("停止", `stopTask(${t.id})`, "danger btn-stop", "stop");
     }
-    return `<button class="btn sm" onclick="runTask(${t.id})">立即检查</button>
-        <button class="btn sm" onclick="editTask(${t.id})">编辑</button>
-        <button class="btn sm" onclick="toggleTask(${t.id}, ${t.enabled ? 0 : 1})">${t.enabled ? '停用' : '启用'}</button>
-        <button class="btn sm danger" onclick="delTask(${t.id}, ${t.recording_count})">删除</button>`;
+    return actionBtn("检查", `runTask(${t.id})`, "btn-check", "scan")
+        + actionBtn("编辑", `editTask(${t.id})`, "btn-edit", "edit")
+        + actionBtn(t.enabled ? "停用" : "启用", `toggleTask(${t.id}, ${t.enabled ? 0 : 1})`,
+            t.enabled ? "btn-power btn-power-on" : "btn-power btn-power-off", t.enabled ? "powerOff" : "power")
+        + actionBtn("删除", `delTask(${t.id}, ${t.recording_count})`, "danger btn-delete", "trash");
 }
 
 async function pauseTask(id) {
@@ -168,37 +352,57 @@ async function stopTask(id) {
 
 function showForm() { $("#task-form").classList.remove("hidden"); }
 function hideForm() { $("#task-form").classList.add("hidden"); $("#f-id").value = ""; }
-function onPreset(sel) { if (sel.value) $("#f-cron").value = sel.value; }
+function resetForm() {
+    formFrequency = null;
+    formCron = "";
+    $("#f-id").value = "";
+    $("#f-name").value = "";
+    $("#f-home").value = "";
+    $("#f-anchor").value = "";
+    uiSet("#f-frequency", "10", true);
+    const firstPlatform = $("#f-platform")._uiSelect?.root.querySelector(".ui-option[data-value]")?.dataset.value || "";
+    uiSet("#f-platform", firstPlatform, true);
+    timePickers.start.set("");
+    timePickers.end.set("");
+}
 
-$("#btn-add").onclick = () => { hideForm(); showForm(); };
+$("#btn-add").onclick = () => { resetForm(); showForm(); };
 
 async function editTask(id) {
     const tasks = await api("/api/tasks");
     const t = tasks.find(x => x.id === id);
     if (!t) return;
+    formFrequency = minutesFromCron(t.cron, t.interval_minutes);
+    formCron = t.cron || "";
     $("#f-id").value = t.id;
     $("#f-name").value = t.name;
-    $("#f-platform").value = t.platform;
+    uiSet("#f-platform", t.platform, true);
     $("#f-home").value = t.anchor_home;
     $("#f-anchor").value = t.anchor_name || "";
-    $("#f-cron").value = t.cron;
-    $("#f-scan-start").value = t.scan_start || "";
-    $("#f-scan-end").value = t.scan_end || "";
+    uiSet("#f-frequency", formFrequency === null ? "" : String(formFrequency), true);
+    timePickers.start.set(t.scan_start || "");
+    timePickers.end.set(t.scan_end || "");
     showForm();
 }
 
 async function saveTask() {
     const id = $("#f-id").value;
+    const start = timePickers.start.read();
+    const end = timePickers.end.read();
+    const minutes = Number(uiValue("#f-frequency"));
+    if (!INTERVALS.includes(minutes)) { toast("请选择检查频率", "err"); return; }
+    if (!start.ok || !end.ok) { toast("时分需同时选择，或起始/结束都选「不限」", "err"); return; }
     const body = {
         name: $("#f-name").value.trim(),
-        platform: $("#f-platform").value,
+        platform: uiValue("#f-platform"),
         anchor_home: $("#f-home").value.trim(),
         anchor_name: $("#f-anchor").value.trim(),
-        cron: $("#f-cron").value.trim(),
-        scan_start: $("#f-scan-start").value.trim(),
-        scan_end: $("#f-scan-end").value.trim(),
+        cron: minutes === formFrequency ? formCron : cronFromMinutes(minutes),
+        interval_minutes: minutes,
+        scan_start: start.value,
+        scan_end: end.value,
     };
-    if (!body.name || !body.anchor_home || !body.cron) { toast("任务名 / 主播主页 / 频率为必填", "err"); return; }
+    if (!body.name || !body.anchor_home) { toast("任务名 / 主播主页为必填", "err"); return; }
     try {
         if (id) await api(`/api/tasks/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         else await api("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -232,18 +436,18 @@ async function runTask(id) {
 
 // ---------- 产物 ----------
 async function loadRecordings() {
-    const tid = $("#filter-task").value;
+    const tid = uiValue("#filter-task");
     const list = await api(tid ? `/api/recordings?task_id=${tid}` : "/api/recordings");
     $("#recording-tbody").innerHTML = list.length ? list.map(r => `
         <tr>
-            <td>${r.id}</td>
-            <td>任务#${r.task_id}</td>
+            <td class="mono muted">${r.id}</td>
+            <td><span class="task-ref">任务 #${r.task_id}</span></td>
             <td class="mono">${r.start_time || "-"}</td>
             <td class="mono">${r.end_time || "-"}</td>
             <td class="mono">${fmtDur(r.duration)}</td>
             <td class="mono">${fmtSize(r.file_size)}</td>
-            <td><span class="tag ${r.status === 'completed' ? 'done' : (r.status === 'failed' ? 'failed' : 'recording')}">${r.status}</span></td>
-            <td>${recOps(r)}</td>
+            <td>${statusTag(r.status)}</td>
+            <td><div class="row-actions">${recOps(r)}</div></td>
         </tr>`).join("") : '<tr><td colspan="8" class="empty">暂无产物</td></tr>';
 }
 
@@ -266,6 +470,7 @@ async function openFolder() {
 }
 
 // ---------- 初始化 ----------
+initSelects();
 loadStatus();
 loadPlatforms();
 loadDashboard();
