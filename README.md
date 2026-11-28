@@ -89,9 +89,38 @@ python run.py
 2. 系统按频率检查主页是否开播，开播即进入直播间录制，下播自动停止
 3. 「产物」区按任务查看录制结果，在线试听/下载
 
+## 录音与文稿
+
+录制文件保存成功时，系统在同一笔 SQLite 事务中创建转写任务。打开总览的最近录音，或在「录音与文稿」按任务筛选，可查看排队、正在转写和完成状态。文稿按停顿和长度分段，可切换逐句回听，点击语句从对应时间点播放，也可复制全文。失败详情提供重试；升级前的录音可以手动生成文稿。删除录音记录会一并删除关联文稿。
+
+桌面默认复用本地 `whisper` 命令和多语言 `small` 模型。如果尚未安装，可在 Python 虚拟环境中运行 `python -m pip install openai-whisper`，并确保 ffmpeg 可执行。首次使用时 Whisper 会下载模型；已有缓存可离线使用。可用 `RECORDER_WHISPER` 指定命令的绝对路径，用 `RECORDER_WHISPER_MODEL` 选择模型。默认单任务、双 CPU 线程，服务重启后自动重新领取任务。
+
+### 小内存 Linux 部署
+
+Docker 镜像包含 Chromium、ffmpeg 和 whisper.cpp 的 Python 绑定。小内存部署只需额外下载一次多语言 `small-q5_1` 模型。Linux shell 在项目根目录运行以下命令。
+
+```sh
+mkdir -p models
+curl -fL --retry 2 -o models/ggml-small-q5_1.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin
+echo 'ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb  models/ggml-small-q5_1.bin' | sha256sum -c -
+docker build -t live-recorder:local .
+docker run -d --name live-recorder --restart unless-stopped \
+  --cpus=2 --memory=2g --memory-swap=2g --shm-size=128m \
+  -p 127.0.0.1:8000:8000 -v recorder-data:/opt/recorder/storage \
+  -v "$PWD/models:/models:ro" live-recorder:local
+```
+
+国内网络构建时可按需传入 `--build-arg DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`。
+
+通过服务器本机的 8000 端口或 SSH 端口转发访问工作台。数据卷同时保存 SQLite 和录音。无桌面服务器使用页面内试听和下载。模型文件也可以在另一台机器上下载并校验后复制。
+
+Linux 已有 Python 环境可安装 `pywhispercpp==1.5.1`，将 `RECORDER_WHISPER_CPP_MODEL` 设为量化模型的完整路径，直接运行 `python run.py`。macOS 和 Windows 使用本地 Whisper 命令。Linux 轻量模式在独立进程中转写，优先检查和录制直播，浏览器和识别模型轮流占用资源。转写用 CPU 双线程依次处理任务，每次解码约两分钟，在块尾的低能量处切分；每块的文稿及进度一起写入 SQLite，重启从已保存的位置继续。长时间连续直播的吞吐量取决于 CPU 和发言密度，应按实机处理耗时判断队列能否追上录制。
+
 ## 自动化验证
 
 ```bash
+python -m unittest test_transcription # 检查排队、恢复、失败重试和语句时间戳
+python test_e2e.py                  # 使用独立临时库，要求测试主播正在开播
 python verify_recording.py            # 两种采集模式：采集 → 转码 → 解码/音量/播放检查
 python verify_recording.py --file 路径 # 只验证某个产物能否正常打开播放
 ```

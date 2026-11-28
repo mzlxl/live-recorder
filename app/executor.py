@@ -7,10 +7,12 @@
 import ctypes
 import os
 import platform
+import re
 import signal
 import subprocess
 import threading
 import time
+from contextlib import nullcontext
 from datetime import datetime
 
 # wintypes 只存在于 Windows，非 Windows 上不能导入，否则整个应用无法启动
@@ -32,7 +34,11 @@ from app.recorder.loopback import LoopbackCapture
 
 # 全局锁：系统音同一时刻只能录一路
 _lock = threading.Lock()
+# 轻量模式下优先录制，浏览器和模型互斥。
+low_memory_slot = threading.Lock()
+recording_requested = threading.Event()
 _running = set()
+last_result = {}
 # task_id -> {"proc": ffmpeg, "paused": bool, "stop": bool, "rec_id": int, "out_path": str}
 _run_state = {}
 _suspended_pids = set()
@@ -129,6 +135,10 @@ def is_running(task_id):
     return task_id in _running
 
 
+def is_capturing(task_id):
+    return task_id in _run_state
+
+
 def is_paused(task_id):
     s = _run_state.get(task_id)
     return bool(s and s["paused"])
@@ -195,20 +205,43 @@ def in_time_range(task):
     return now <= se
 
 
-def run_recording(task):
-    """调度入口。返回结果描述字符串。"""
-    task_id = task["id"]
+def _reserve(task):
     if not in_time_range(task):
         return "不在扫描时间范围内，跳过"
     if not _lock.acquire(blocking=False):
-        return "已有其他任务在录制（系统音全局共享），本次跳过"
-    _running.add(task_id)
+        return "已有任务在检查或录制，本次跳过"
+    _running.add(task["id"])
+    recording_requested.set()
+
+
+def _record_reserved(task):
+    task_id = task["id"]
     try:
-        return _do_record(task)
+        with low_memory_slot if config.whisper_cpp_model() else nullcontext():
+            last_result[task_id] = _do_record(task)
+            return last_result[task_id]
     finally:
+        recording_requested.clear()
         _running.discard(task_id)
         _run_state.pop(task_id, None)
         _lock.release()
+
+
+def run_recording(task):
+    """定时调度入口。"""
+    reason = _reserve(task)
+    if reason:
+        last_result[task["id"]] = reason
+        return reason
+    return _record_reserved(task)
+
+
+def start_recording(task):
+    """手动检查在响应前占用录制槽，重复请求立即得到反馈。"""
+    reason = _reserve(task)
+    if reason:
+        return reason
+    threading.Thread(target=_record_reserved, args=(task,), daemon=True).start()
 
 
 def _ffmpeg_error_hint(stderr_text, recorder):
@@ -230,6 +263,8 @@ def _do_record(task):
     recorder = current_recorder()
     ffmpeg_bin = detect_ffmpeg()
     start_ts = time.time()
+    rec_id = None
+    out_path = ""
     system_audio = False
 
     try:
@@ -283,11 +318,7 @@ def _do_record(task):
                 loopback = LoopbackCapture(ffmpeg_bin, out_path)
                 use_loopback = _IS_WINDOWS and loopback.available()
                 capture = loopback if use_loopback else BrowserAudioCapture(page, ffmpeg_bin, out_path)
-                try:
-                    capture.start()
-                except Exception as e:
-                    db.finish_recording(rec_id, out_path, 0, 0, status="failed", error=str(e))
-                    raise
+                capture.start()
                 ffmpeg_proc = capture
             _run_state[task_id] = {
                 "proc": ffmpeg_proc, "paused": False, "stop": False,
@@ -334,6 +365,8 @@ def _do_record(task):
                                or getattr(ffmpeg_proc, "is_loopback", False))
             if ffmpeg_proc.poll() is None and not _custom_capture:
                 try:
+                    if _run_state[task_id]["paused"]:
+                        _resume_process(ffmpeg_proc)
                     ffmpeg_proc.stdin.write(b"q\n")
                     ffmpeg_proc.stdin.flush()
                 except Exception:
@@ -352,13 +385,20 @@ def _do_record(task):
 
             duration = int(time.time() - start_ts)
             size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
-            if size == 0:
+            if size == 0 or ffmpeg_proc.poll() not in (0, None):
                 detail = stderr_text if (capture and stderr_text) else _ffmpeg_error_hint(stderr_text, recorder)
                 db.finish_recording(rec_id, out_path, duration, size, status="failed", error=detail)
                 browser.close()
-                return "录制产物为空：" + detail
-            db.finish_recording(rec_id, out_path, duration, size, status="completed")
+                return "录制失败：" + detail
+            # 读取封装时长，排除暂停、转码和浏览器退出耗时，同时验证音轨存在。
+            metadata = subprocess.run([ffmpeg_bin, "-hide_banner", "-i", out_path],
+                                      capture_output=True, text=True, errors="replace", timeout=15)
+            clock = re.search(r"Duration: (\d+):(\d+):([\d.]+)", metadata.stderr)
+            if not clock or "Audio:" not in metadata.stderr:
+                raise RuntimeError("文件缺少可读取的音频时长或音轨")
+            duration = round(int(clock[1]) * 3600 + int(clock[2]) * 60 + float(clock[3]))
             browser.close()
+            db.finish_recording(rec_id, out_path, duration, size, status="completed")
             return f"录制完成 {duration}s / {size} 字节"
     except Exception as e:
         st = _run_state.pop(task_id, None)
@@ -370,9 +410,8 @@ def _do_record(task):
                     proc.kill()
                 except Exception:
                     pass
-        if st and st.get("rec_id"):
-            fp = st.get("out_path", "")
-            size = os.path.getsize(fp) if fp and os.path.exists(fp) else 0
-            db.finish_recording(st["rec_id"], fp, int(time.time() - start_ts), size,
+        if rec_id:
+            size = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
+            db.finish_recording(rec_id, out_path, int(time.time() - start_ts), size,
                                 status="failed", error=str(e))
         return f"录制异常: {e}"

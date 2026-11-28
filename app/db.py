@@ -15,6 +15,7 @@ os.makedirs(STORAGE_DIR, exist_ok=True)
 def _conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
@@ -49,6 +50,13 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 FOREIGN KEY(task_id) REFERENCES tasks(id)
             );
+            CREATE TABLE IF NOT EXISTS transcripts (
+                recording_id INTEGER PRIMARY KEY REFERENCES recordings(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'queued',
+                paragraphs TEXT,
+                processed REAL NOT NULL DEFAULT 0,
+                error TEXT DEFAULT ''
+            );
             """
         )
         # 迁移：旧表补 scan_start/scan_end/interval_minutes 列
@@ -60,15 +68,23 @@ def init_db():
         if "interval_minutes" not in cols:
             c.execute("ALTER TABLE tasks ADD COLUMN interval_minutes INTEGER")
 
+        if "processed" not in {r[1] for r in c.execute("PRAGMA table_info(transcripts)")}:
+            c.execute("ALTER TABLE transcripts ADD COLUMN processed REAL NOT NULL DEFAULT 0")
+
 
 def now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ---------- 任务 CRUD ----------
-def list_tasks():
+def list_tasks(with_counts=False):
     with _conn() as c:
-        rows = c.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()
+        if with_counts:
+            rows = c.execute("""SELECT t.*, COALESCE(r.n,0) AS recording_count FROM tasks t
+                                LEFT JOIN (SELECT task_id, COUNT(*) AS n FROM recordings GROUP BY task_id) r
+                                ON r.task_id=t.id ORDER BY t.id DESC""").fetchall()
+        else:
+            rows = c.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()
     return [dict(r) for r in rows]
 
 
@@ -112,14 +128,17 @@ def delete_task(task_id):
 
 
 # ---------- 产物 CRUD ----------
-def list_recordings(task_id=None):
+def list_recordings(task_id=None, limit=None):
+    query = """SELECT r.*, t.name AS task_name, x.status AS transcript_status
+               FROM recordings r LEFT JOIN tasks t ON t.id=r.task_id
+               LEFT JOIN transcripts x ON x.recording_id=r.id"""
     with _conn() as c:
-        if task_id:
-            rows = c.execute(
-                "SELECT * FROM recordings WHERE task_id=? ORDER BY id DESC", (task_id,)
-            ).fetchall()
-        else:
-            rows = c.execute("SELECT * FROM recordings ORDER BY id DESC").fetchall()
+        where, args = (" WHERE r.task_id=?", (task_id,)) if task_id is not None else ("", ())
+        query += where + " ORDER BY r.id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            args += (limit,)
+        rows = c.execute(query, args).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -139,6 +158,54 @@ def finish_recording(rec_id, file_path, duration, file_size, status="completed",
             "WHERE id=?",
             (now_str(), duration, file_path, file_size, status, error, rec_id),
         )
+
+        if status == "completed" and file_size > 0:
+            c.execute("INSERT OR IGNORE INTO transcripts(recording_id) VALUES(?)", (rec_id,))
+
+
+def claim_transcript():
+    with _conn() as c:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("""SELECT recording_id, file_path, processed, paragraphs FROM transcripts
+                           JOIN recordings ON id=recording_id WHERE transcripts.status='queued'
+                           ORDER BY recording_id LIMIT 1""").fetchone()
+        if row:
+            c.execute("UPDATE transcripts SET status='running' WHERE recording_id=?", (row[0],))
+            return dict(row)
+
+
+def checkpoint(rec_id, processed, paragraphs):
+    with _conn() as c:
+        return c.execute("""UPDATE transcripts SET processed=?, paragraphs=?
+                            WHERE recording_id=? AND status='running'""",
+                         (processed, paragraphs, rec_id)).rowcount == 1
+
+
+def set_transcript_result(rec_id, status, paragraphs=None, error=""):
+    with _conn() as c:
+        c.execute("""UPDATE transcripts SET status=?, paragraphs=COALESCE(?,paragraphs), error=?
+                     WHERE recording_id=? AND status='running'""", (status, paragraphs, error, rec_id))
+
+
+def recover_transcripts():
+    with _conn() as c:
+        c.execute("UPDATE transcripts SET status='queued' WHERE status='running'")
+        c.execute("""UPDATE recordings SET status='failed', error='服务中断，录音未正常结束',
+                     end_time=? WHERE status='recording'""", (now_str(),))
+
+
+def request_transcript(rec_id):
+    with _conn() as c:
+        c.execute("""INSERT INTO transcripts(recording_id) VALUES(?)
+                     ON CONFLICT(recording_id) DO UPDATE SET status='queued', error='', paragraphs=NULL, processed=0
+                     WHERE status='failed'""", (rec_id,))
+
+
+def get_transcript(rec_id):
+    with _conn() as c:
+        row = c.execute("SELECT status, paragraphs, processed, error FROM transcripts WHERE recording_id=?",
+                        (rec_id,)).fetchone()
+        return dict(row) if row else {"status": "unavailable", "paragraphs": None, "error": ""}
 
 
 def get_recording(rec_id):
@@ -177,7 +244,7 @@ def dashboard_stats():
         today_size = c.execute(
             "SELECT COALESCE(SUM(file_size),0) FROM recordings WHERE start_time LIKE ?", (today + "%",)
         ).fetchone()[0]
-    recent = list_recordings()[:10]
+    recent = list_recordings(limit=10)
     return {
         "task_total": task_total,
         "task_enabled": task_enabled,

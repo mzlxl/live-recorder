@@ -73,6 +73,7 @@ class LoopbackCapture:
         finally:
             try:
                 self._proc.stdin.close()
+                self._proc.stdin = None
             except Exception:
                 pass
 

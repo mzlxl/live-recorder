@@ -1,477 +1,627 @@
-// 前端逻辑：看板 / 任务 / 产物 三页管理
-const $ = (s) => document.querySelector(s);
-
-const INTERVALS = [5, 10, 15, 20, 30, 45, 60, 90, 120];
-const allSelects = [];
-const CHEVRON = '<svg class="ui-select-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7.5 10 12.5 15 7.5"/></svg>';
-const CHECK = '<svg class="option-check" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3.2 3.2L13 5"/></svg>';
-const ICONS = {
-    scan: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 6.6A5.3 5.3 0 1 0 13 10"/><path d="M13.4 2.6v4h-4"/><circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none"/></svg>',
-    play: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg>',
-    edit: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 2.8 13.2 5 5.7 12.5H3.5v-2.2z"/><path d="m9.7 4.1 2.2 2.2"/></svg>',
-    pause: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="3" width="3" height="10" rx="1"/><rect x="9" y="3" width="3" height="10" rx="1"/></svg>',
-    resume: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg>',
-    stop: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>',
-    power: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 2v5"/><path d="M4.7 4.6a5 5 0 1 0 6.6 0"/></svg>',
-    powerOff: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 2v5"/><path d="M4.7 4.6a5 5 0 1 0 6.6 0"/><path d="m3 13 10-10"/></svg>',
-    trash: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8h4.8l.6-8M7 7v3.5M9 7v3.5"/></svg>',
-    folder: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5h4l1.3 1.6H14v6.4H2z"/></svg>',
-    file: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>',
+const $ = (selector) => document.querySelector(selector);
+const paths = {
+  dashboard:
+    '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  tasks: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8m-8 4h8m-8 4h5"/>',
+  library: '<path d="M4 5v15m5-17v17m5-15v15m3-14 4 13"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  close: '<path d="m6 6 12 12M6 18 18 6"/>',
+  audio: '<path d="M3 10v4m4-8v12m5-16v20m5-16v12m4-8v4"/>',
+  radio:
+    '<circle cx="12" cy="12" r="2"/><path d="M7 7a7 7 0 0 0 0 10m10-10a7 7 0 0 1 0 10M4 4a11 11 0 0 0 0 16M20 4a11 11 0 0 1 0 16"/>',
+  refresh: '<path d="M20 10a8 8 0 1 0-1 7m1-13v6h-6"/>',
 };
-
-function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function icon(name) {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true">' + paths[name] + "</svg>";
 }
-function escapeJs(s) { return String(s ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'"); }
-function statusTag(status) {
-    const map = { completed: ["done", "已完成"], failed: ["failed", "失败"], recording: ["recording", "录制中"] };
-    const [tone, label] = map[status] || ["off", status || "未知"];
-    return `<span class="tag ${tone}">${escapeHtml(label)}</span>`;
+for (const el of document.querySelectorAll("[data-icon]")) {
+  el.innerHTML = icon(el.dataset.icon);
+  el.ariaHidden = "true";
 }
-function pad2(n) { return String(n).padStart(2, "0"); }
-function actionBtn(label, onclick, tone, icon) {
-    return `<button class="btn sm ${tone || ""}" title="${escapeHtml(label)}" onclick="${onclick}">${icon ? ICONS[icon] : ""}<span>${label}</span></button>`;
+for (let n = 0; n < 57; n++) {
+  const bar = document.createElement("span");
+  bar.style.height = 9 + Math.abs(Math.sin(n * 0.22) * Math.cos(n * 0.36)) * 90 + "%";
+  $(".meter").append(bar);
 }
-
-// ---------- 统一下拉组件 ----------
-function closeAllSelects() { allSelects.forEach(s => s.close()); }
-
-function createSelect(root, options, value, opts = {}) {
-    if (typeof root === "string") root = $(root);
-    const placeholder = opts.placeholder || "请选择";
-    root.classList.add("ui-select");
-    root.innerHTML = `
-        <button type="button" class="ui-select-trigger" aria-haspopup="listbox" aria-expanded="false">
-            <span class="ui-select-value"></span>${CHEVRON}
-        </button>
-        <div class="ui-select-menu" role="listbox"></div>`;
-    const trigger = root.querySelector(".ui-select-trigger");
-    const menu = root.querySelector(".ui-select-menu");
-    const labelEl = root.querySelector(".ui-select-value");
-    const state = { options: [], value: "" };
-
-    function normalize(list) {
-        return list.map(o => typeof o === "object"
-            ? { value: String(o.value ?? ""), label: String(o.label ?? "") }
-            : { value: String(o), label: String(o) });
-    }
-    function renderMenu() {
-        menu.innerHTML = state.options.length
-            ? state.options.map(o => `<button type="button" class="ui-option ${o.value === state.value ? "selected" : ""}" role="option" data-value="${escapeHtml(o.value)}" data-label="${escapeHtml(o.label)}"><span>${escapeHtml(o.label)}</span>${o.value === state.value ? CHECK : ""}</button>`).join("")
-            : '<div class="ui-option is-empty">暂无选项</div>';
-    }
-    function setValue(v, silent = false) {
-        state.value = String(v ?? "");
-        const current = state.options.find(o => o.value === state.value);
-        labelEl.textContent = current ? current.label : placeholder;
-        trigger.classList.toggle("is-placeholder", !current);
-        renderMenu();
-        if (!silent && typeof opts.onChange === "function") opts.onChange(state.value);
-    }
-    function setOptions(list, v, silent = true) {
-        state.options = normalize(list);
-        const next = v === undefined ? state.value : String(v ?? "");
-        setValue(state.options.some(o => o.value === next) ? next : "", silent);
-    }
-    function close() {
-        root.classList.remove("is-open");
-        trigger.setAttribute("aria-expanded", "false");
-    }
-    function open() {
-        closeAllSelects();
-        root.classList.add("is-open");
-        trigger.setAttribute("aria-expanded", "true");
-        const active = menu.querySelector(".ui-option.selected");
-        if (active) active.scrollIntoView({ block: "nearest" });
-    }
-    trigger.addEventListener("click", e => {
-        e.stopPropagation();
-        root.classList.contains("is-open") ? close() : open();
-    });
-    menu.addEventListener("click", e => {
-        const item = e.target.closest(".ui-option[data-value]");
-        if (!item) return;
-        setValue(item.dataset.value);
-        close();
-    });
-    document.addEventListener("click", e => { if (!root.contains(e.target)) close(); });
-    document.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
-
-    const api = {
-        root, open, close, setOptions, setValue,
-        getValue: () => state.value,
-        getLabel: () => (state.options.find(o => o.value === state.value) || {}).label || "",
-    };
-    root._uiSelect = api;
-    allSelects.push(api);
-    setOptions(options, value, true);
-    return api;
+const esc = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+  );
+const intervalOptions = [5, 10, 15, 20, 30, 45, 60, 90, 120];
+const titles = { dashboard: "录制总览", tasks: "录制任务", recordings: "录音与文稿" };
+const transcriptStates = {
+  queued: "等待转写",
+  running: "正在转写",
+  completed: "文稿已就绪",
+  failed: "转写失败",
+  unavailable: "尚未转写",
+};
+let tasks = [],
+  records = [],
+  editing,
+  reading,
+  readerState,
+  pendingConfirm,
+  toastTimer,
+  revision = 0;
+let tab = "dashboard";
+let desktopFiles = false;
+const audio = $("#player");
+function duration(seconds) {
+  const n = Math.max(0, Math.floor(seconds || 0));
+  return (
+    (n >= 3600 ? Math.floor(n / 3600) + ":" : "") +
+    String(Math.floor(n / 60) % 60).padStart(2, "0") +
+    ":" +
+    String(n % 60).padStart(2, "0")
+  );
 }
-function uiValue(selector) { const el = typeof selector === "string" ? $(selector) : selector; return el && el._uiSelect ? el._uiSelect.getValue() : ""; }
-function uiSet(selector, value, silent) { const el = typeof selector === "string" ? $(selector) : selector; if (el && el._uiSelect) el._uiSelect.setValue(value, silent); }
-
-function mountTimePicker(selector, initial = "") {
-    const root = $(selector);
-    root.classList.add("time-picker");
-    root.innerHTML = '<div class="time-pair"><div class="time-part hour"></div><span class="time-colon">:</span><div class="time-part minute"></div></div>';
-    const unlimited = { value: "", label: "不限" };
-    const hours = [unlimited, ...Array.from({ length: 24 }, (_, i) => ({ value: pad2(i), label: pad2(i) }))];
-    const minutes = [unlimited, ...Array.from({ length: 60 }, (_, i) => ({ value: pad2(i), label: pad2(i) }))];
-    const [h = "", m = ""] = (initial || "").split(":");
-    createSelect(root.querySelector(".hour"), hours, h, { placeholder: "时" });
-    createSelect(root.querySelector(".minute"), minutes, m, { placeholder: "分" });
-    return {
-        read() {
-            const hh = uiValue(root.querySelector(".hour"));
-            const mm = uiValue(root.querySelector(".minute"));
-            if (!hh && !mm) return { ok: true, value: "" };
-            if (hh && mm) return { ok: true, value: `${hh}:${mm}` };
-            return { ok: false, value: "" };
-        },
-        set(value) {
-            const [vh = "", vm = ""] = (value || "").split(":");
-            uiSet(root.querySelector(".hour"), vh, true);
-            uiSet(root.querySelector(".minute"), vm, true);
-        },
-    };
+function size(n) {
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round((n || 0) / 1024) + " KB";
 }
-
-// ---------- 工具 ----------
-function fmtSize(b) { if (!b) return "-"; if (b < 1024) return b + "B"; if (b < 1048576) return (b / 1024).toFixed(1) + "KB"; return (b / 1048576).toFixed(1) + "MB"; }
-function fmtDur(s) { if (!s) return "-"; const m = Math.floor(s / 60), r = s % 60; if (m < 60) return m + "m" + r + "s"; const h = Math.floor(m / 60); return h + "h" + (m % 60) + "m"; }
-function today() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
-function isToday(ts) { return (ts || "").startsWith(today()); }
-
-let toastTimer = null;
-function toast(msg, type) {
-    const el = $("#toast");
-    el.textContent = msg;
-    el.className = "toast " + (type || "");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.add("hidden"), 3000);
+function notify(msg) {
+  $("#toast").textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($("#toast").textContent = ""), 3800);
 }
-
-async function api(url, opt) {
-    const r = await fetch(url, opt);
-    if (!r.ok) {
-        let msg = await r.text();
-        try { const j = JSON.parse(msg); msg = j.detail || j.message || msg; } catch (e) { /* 保留原始响应 */ }
-        throw new Error(msg);
-    }
-    return r.json();
+async function api(path, method = "GET", data) {
+  const response = await fetch("/api/" + path, {
+    method,
+    headers: data ? { "Content-Type": "application/json" } : {},
+    body: data ? JSON.stringify(data) : undefined,
+  });
+  const result = await response.json();
+  if (!response.ok || result?.ok === false) {
+    const detail = result.detail || result.msg;
+    throw new Error(
+      Array.isArray(detail)
+        ? detail.map((e) => e.msg).join(" · ")
+        : detail || "操作未成功，请刷新后重试",
+    );
+  }
+  return result;
 }
-
-// ---------- Tab 切换 ----------
-function switchTab(name) {
-    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-    document.querySelectorAll("main > section").forEach(s => s.classList.add("hidden"));
-    $("#page-" + name).classList.remove("hidden");
-    if (name === "dashboard") loadDashboard();
-    if (name === "tasks") loadTasks();
-    if (name === "recordings") loadRecordings();
+function updateHTML(selector, html) {
+  const el = $(selector);
+  if (el._markup !== html) {
+    const active = el.contains(document.activeElement) ? document.activeElement.dataset : null;
+    const action = active?.action,
+      id = active?.id;
+    el.innerHTML = html;
+    el._markup = html;
+    if (action)
+      [...el.querySelectorAll("[data-action]")]
+        .find((b) => b.dataset.action === action && b.dataset.id === id)
+        ?.focus({ preventScroll: true });
+  }
 }
-document.querySelectorAll(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
-
-// ---------- 状态栏 ----------
-async function loadStatus() {
-    try {
-        const s = await api("/api/status");
-        const ready = s.recorder_device_ready;
-        const label = s.capture_mode === "browser" ? "浏览器音频采集"
-            : (s.capture_mode === "loopback" ? "系统音频回环" : "声卡");
-        $("#status-bar").innerHTML = `<span class="dot ${ready ? 'ok' : 'bad'}" title="${escapeHtml(s.device_hint || "")}"></span> ${label}${ready ? '就绪' : '未就绪'}` +
-            (s.running.length ? ` · <span style="color:#f87171">录制中 ${s.running.length}</span>` : "");
-    } catch (e) { $("#status-bar").innerHTML = '<span class="dot bad"></span> 服务未连接'; }
+function action(name, label, id, tone = "") {
+  return (
+    '<button class="' +
+    tone +
+    '" data-action="' +
+    name +
+    '" data-id="' +
+    Number(id) +
+    '">' +
+    label +
+    "</button>"
+  );
 }
-
-// ---------- 看板 ----------
-async function loadDashboard() {
-    try {
-        const d = await api("/api/dashboard");
-        const cards = [
-            { label: "任务总数", value: d.task_total, sub: `启用 ${d.task_enabled}` },
-            { label: "今日产物", value: d.today_count, sub: fmtDur(d.today_duration), accent: true },
-            { label: "累计产物", value: d.rec_total, sub: `成功 ${d.rec_completed} / 失败 ${d.rec_failed}` },
-            { label: "累计时长", value: fmtDur(d.total_duration), sub: "" },
-            { label: "累计大小", value: fmtSize(d.total_size), sub: "" },
-        ];
-        $("#stat-cards").innerHTML = cards.map(c =>
-            `<div class="card ${c.accent ? 'accent' : ''}"><div class="label">${c.label}</div><div class="value">${c.value}</div><div class="sub">${c.sub || '&nbsp;'}</div></div>`
-        ).join("");
-
-        // 正在录制
-        const run = d.running_tasks || [];
-        $("#running-list").innerHTML = run.length
-            ? run.map(t => {
-                const controls = t.paused
-                    ? actionBtn("恢复", `resumeTask(${t.id})`, "btn-resume", "resume") + actionBtn("停止", `stopTask(${t.id})`, "danger btn-stop", "stop")
-                    : actionBtn("暂停", `pauseTask(${t.id})`, "btn-pause", "pause") + actionBtn("停止", `stopTask(${t.id})`, "danger btn-stop", "stop");
-                return `<div class="running-item"><span class="pulse"></span><b>${escapeHtml(t.name)}</b>${t.paused ? '<span class="tag off">已暂停</span>' : '<span class="tag recording">录制中</span>'}<span class="tag off">${escapeHtml(t.platform)}</span><span>${escapeHtml(t.anchor_name || "")}</span><span class="running-actions">${controls}</span></div>`;
-            }).join("")
-            : '<div class="empty">当前无正在录制的任务</div>';
-
-        // 今日产物
-        const todayRecs = (d.recent || []).filter(r => isToday(r.start_time));
-        $("#dash-recent").innerHTML = todayRecs.length
-            ? todayRecs.map(recRow).join("")
-            : '<tr><td colspan="6" class="empty">今日暂无产物</td></tr>';
-    } catch (e) { toast("看板加载失败: " + e.message, "err"); }
+function badge(text, tone = "") {
+  return '<span class="badge ' + tone + '">' + esc(text) + "</span>";
 }
-
+function empty(iconName, title, sub) {
+  return (
+    '<div class="empty"><i aria-hidden="true" data-icon="' +
+    iconName +
+    '">' +
+    icon(iconName) +
+    "</i><strong>" +
+    title +
+    "</strong><p>" +
+    sub +
+    "</p></div>"
+  );
+}
+function identity(iconName, title, sub) {
+  return (
+    '<div class="identity"><span class="record-icon"><i data-icon="' +
+    iconName +
+    '">' +
+    icon(iconName) +
+    "</i></span><div><strong>" +
+    esc(title) +
+    '</strong><span class="sub">' +
+    esc(sub) +
+    "</span></div></div>"
+  );
+}
 function recRow(r) {
-    return `<tr>
-        <td><span class="task-ref">任务 #${r.task_id}</span></td>
-        <td class="mono">${r.start_time || "-"}</td>
-        <td class="mono">${fmtDur(r.duration)}</td>
-        <td class="mono">${fmtSize(r.file_size)}</td>
-        <td>${statusTag(r.status)}</td>
-        <td><div class="row-actions">${recOps(r)}</div></td>
-    </tr>`;
+  const st = r.transcript_status || "unavailable";
+  const status =
+    r.status === "completed" ? transcriptStates[st] : r.status === "failed" ? "录制失败" : "录制中";
+  const tone = [r.status, st].includes("failed")
+    ? "failed"
+    : ["queued", "running"].includes(st) || r.status === "recording"
+      ? "busy"
+      : "";
+  return (
+    '<article class="row">' +
+    identity(
+      "audio",
+      r.task_name || "任务 #" + r.task_id,
+      [r.start_time, duration(r.duration), size(r.file_size)].join(" · "),
+    ) +
+    badge(status, tone) +
+    action("read", st === "completed" ? "查看文稿" : "录音详情", r.id) +
+    "</article>"
+  );
 }
-
-function recOps(r) {
-    const btns = [];
-    if (r.file_exists && r.file_url) {
-        btns.push(actionBtn("试听", `playRec('${escapeJs(r.file_url)}')`, "ghost btn-listen", "play"));
-        btns.push(actionBtn("打开", `openRec(${r.id})`, "btn-open", "file"));
-        btns.push(actionBtn("进文件夹", `revealRec(${r.id})`, "btn-open", "folder"));
-    } else if (r.id) {
-        btns.push('<span class="file-missing" title="录制失败或文件已被删除">文件缺失</span>');
+function freq(t) {
+  return t.interval_minutes ? "每 " + t.interval_minutes + " 分钟" : "计划 " + t.cron;
+}
+function taskRow(t) {
+  const sub = [
+    t.anchor_name || "抖音",
+    freq(t),
+    t.scan_start || t.scan_end
+      ? (t.scan_start || "不限") +
+        " 至 " +
+        (t.scan_end || "不限") +
+        (t.scan_end && t.scan_start > t.scan_end ? "（次日）" : "")
+      : "全天",
+    t.recording_count + " 条录音",
+  ].join(" · ");
+  const st = t.running
+    ? t.capturing
+      ? t.paused
+        ? "已暂停"
+        : "录制中"
+      : "检查开播中"
+    : t.enabled
+      ? "已启用"
+      : "已停用";
+  const controls = t.running
+    ? t.capturing
+      ? action(t.paused ? "resume" : "pause", t.paused ? "恢复" : "暂停", t.id) +
+        action("stop", "停止", t.id)
+      : ""
+    : action("run", "立即检查", t.id) +
+      action("edit", "编辑", t.id) +
+      action("toggle", t.enabled ? "停用" : "启用", t.id) +
+      action("delete-task", "删除", t.id);
+  return (
+    '<article class="row">' +
+    identity("tasks", t.name, sub) +
+    badge(st, t.running ? "busy" : "neutral") +
+    '<div class="actions">' +
+    controls +
+    "</div>" +
+    (!t.running && t.last_result
+      ? '<small class="last-result">最近检查 · ' + esc(t.last_result) + "</small>"
+      : "") +
+    "</article>"
+  );
+}
+async function refresh() {
+  const current = ++revision;
+  const filter = $("#filter-task").value;
+  try {
+    const [all, data] = await Promise.all([
+      api("tasks"),
+      tab === "dashboard"
+        ? api("dashboard")
+        : tab === "recordings"
+          ? api("recordings" + (filter ? "?task_id=" + encodeURIComponent(filter) : ""))
+          : Promise.resolve(null),
+    ]);
+    if (current !== revision) return;
+    tasks = all;
+    const options =
+      '<option value="">全部任务</option>' +
+      tasks.map((t) => '<option value="' + t.id + '">' + esc(t.name) + "</option>").join("");
+    updateHTML("#filter-task", options);
+    $("#filter-task").value = tasks.some((t) => String(t.id) === filter) ? filter : "";
+    if (filter && !$("#filter-task").value && tab === "recordings") return refresh();
+    if (tab === "tasks") {
+      $("#task-count").textContent = tasks.length + " 个任务";
+      updateHTML(
+        "#task-list",
+        tasks.map(taskRow).join("") ||
+          empty("tasks", "还没有录制任务", "点击「新建任务」，添加要关注的主播。"),
+      );
+    } else if (tab === "dashboard") {
+      const run = data.running_tasks;
+      updateHTML(
+        "#running-list",
+        run.length
+          ? run
+              .map(
+                (t) =>
+                  esc(t.name) +
+                  "<small>" +
+                  (t.capturing ? (t.paused ? "已暂停" : "正在录制") : "正在检查开播状态") +
+                  "</small>",
+              )
+              .join("")
+          : "当前没有进行中的录制<small>" + data.task_enabled + " 个任务已启用定时检查</small>",
+      );
+      const stats = [
+        ["今日录音", data.today_count, "合计 " + duration(data.today_duration)],
+        ["录制任务", data.task_total, "已启用 " + data.task_enabled + " 个"],
+        ["累计录音", data.rec_total, "完成 " + data.rec_completed + " · 失败 " + data.rec_failed],
+        ["录音总时长", duration(data.total_duration), "占用 " + size(data.total_size)],
+      ];
+      updateHTML(
+        "#stat-cards",
+        stats
+          .map(
+            ([label, value, hint]) =>
+              '<div class="metric"><span class="metric-label">' +
+              label +
+              "</span><strong>" +
+              value +
+              "</strong><small>" +
+              hint +
+              "</small></div>",
+          )
+          .join(""),
+      );
+      records = data.recent;
+      updateHTML(
+        "#dash-recent",
+        records.map(recRow).join("") ||
+          empty("audio", "暂无录音", "录制结束后，可在这里收听录音并阅读文稿。"),
+      );
+    } else {
+      records = data;
+      updateHTML(
+        "#recording-list",
+        records.map(recRow).join("") ||
+          empty("library", "暂无匹配的录音", "可检查筛选条件或前往录制任务。"),
+      );
     }
-    if (r.id) btns.push(actionBtn("删除", `delRec(${r.id})`, "danger btn-delete", "trash"));
-    return btns.join("") || '<span class="muted">-</span>';
-}
-
-// 试听：用浮动 audio 播放
-function playRec(url) {
-    let a = $("#float-audio");
-    if (!a) {
-        a = document.createElement("audio");
-        a.id = "float-audio"; a.controls = true; a.style.cssText = "position:fixed;bottom:16px;left:16px;z-index:300;width:320px;";
-        document.body.appendChild(a);
+    if (reading?.status === "recording") {
+      const latest = records.find((r) => r.id === reading.id);
+      if (latest && latest.status !== "recording") openReader(latest);
     }
-    a.src = url; a.play();
-}
-
-// ---------- 任务 ----------
-let formFrequency = null;
-let formCron = "";
-let timePickers = {};
-
-function minutesFromCron(cron, interval) {
-    if (INTERVALS.includes(Number(interval))) return Number(interval);
-    const c = (cron || "").trim();
-    const step = c.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
-    if (step && INTERVALS.includes(Number(step[1]))) return Number(step[1]);
-    if (/^0\s+\*\s+\*\s+\*\s+\*$/.test(c)) return 60;
-    if (/^0\s+\*\/2\s+\*\s+\*\s+\*$/.test(c)) return 120;
-    return null;
-}
-function cronFromMinutes(n) {
-    if (n === 60) return "0 * * * *";
-    if (n === 120) return "0 */2 * * *";
-    return `*/${n} * * * *`;
-}
-function frequencyText(t) {
-    const m = minutesFromCron(t.cron, t.interval_minutes);
-    return m ? `<span class="freq-pill">每 ${m} 分钟</span>` : `<span class="muted mono" title="${escapeHtml(t.cron)}">自定义 cron</span>`;
-}
-function scanRangeText(t) {
-    const s = t.scan_start || "", e = t.scan_end || "";
-    if (!s && !e) return '<span class="muted">全天</span>';
-    const cross = s && e && s > e;
-    return `<span class="mono">${s || "不限"}</span><span class="range-arrow">→</span><span class="mono">${e || "不限"}</span>${cross ? '<span class="tag tiny next-day">次日</span>' : ""}`;
-}
-
-function initSelects() {
-    createSelect("#f-platform", [], "", { placeholder: "选择平台" });
-    createSelect("#f-frequency", [{ value: "", label: "请选择频率" }, ...INTERVALS.map(n => ({ value: String(n), label: `每 ${n} 分钟` }))], "10", { placeholder: "选择频率" });
-    timePickers = { start: mountTimePicker("#f-scan-start"), end: mountTimePicker("#f-scan-end") };
-    createSelect("#filter-task", [{ value: "", label: "全部任务" }], "", { placeholder: "全部任务", onChange: loadRecordings });
-}
-
-async function loadPlatforms() {
-    const list = await api("/api/platforms");
-    const options = list.map(p => ({ value: p.name, label: p.label }));
-    const current = uiValue("#f-platform") || (options[0] || {}).value || "";
-    $("#f-platform")._uiSelect.setOptions(options, current, true);
-}
-
-async function loadTasks() {
-    const tasks = await api("/api/tasks");
-    $("#task-tbody").innerHTML = tasks.length ? tasks.map(t => {
-        const st = t.running
-            ? (t.paused ? '<span class="tag off">已暂停</span>' : '<span class="tag recording">录制中</span>')
-            : `<span class="tag ${t.enabled ? 'on' : 'off'}">${t.enabled ? '启用' : '停用'}</span>`;
-        return `<tr>
-            <td class="mono muted">${t.id}</td>
-            <td><div class="cell-primary">${escapeHtml(t.name)}</div><div class="cell-sub">${escapeHtml(t.anchor_home)}</div></td>
-            <td><span class="tag off">${escapeHtml(t.platform)}</span></td>
-            <td>${escapeHtml(t.anchor_name || "-")}</td>
-            <td>${frequencyText(t)}</td>
-            <td>${scanRangeText(t)}</td>
-            <td>${st}</td>
-            <td><span class="count-badge">${t.recording_count}</span></td>
-            <td><div class="row-actions">${taskOps(t)}</div></td>
-        </tr>`;
-    }).join("") : '<tr><td colspan="9" class="empty">暂无任务，点右上角「新增任务」</td></tr>';
-
-    const options = [{ value: "", label: "全部任务" }, ...tasks.map(t => ({ value: String(t.id), label: t.name }))];
-    $("#filter-task")._uiSelect.setOptions(options, uiValue("#filter-task"), true);
-}
-
-function taskOps(t) {
-    if (t.running) {
-        return t.paused
-            ? actionBtn("恢复", `resumeTask(${t.id})`, "btn-resume", "resume") + actionBtn("停止", `stopTask(${t.id})`, "danger btn-stop", "stop")
-            : actionBtn("暂停", `pauseTask(${t.id})`, "btn-pause", "pause") + actionBtn("停止", `stopTask(${t.id})`, "danger btn-stop", "stop");
+    $("#load-error").hidden = true;
+  } catch (e) {
+    if (current === revision) {
+      $("#load-error").textContent = "加载失败，正在等待重试。" + e.message;
+      $("#load-error").hidden = false;
     }
-    return actionBtn("检查", `runTask(${t.id})`, "btn-check", "scan")
-        + actionBtn("编辑", `editTask(${t.id})`, "btn-edit", "edit")
-        + actionBtn(t.enabled ? "停用" : "启用", `toggleTask(${t.id}, ${t.enabled ? 0 : 1})`,
-            t.enabled ? "btn-power btn-power-on" : "btn-power btn-power-off", t.enabled ? "powerOff" : "power")
-        + actionBtn("删除", `delTask(${t.id}, ${t.recording_count})`, "danger btn-delete", "trash");
+  }
 }
-
-async function pauseTask(id) {
-    try { await api(`/api/tasks/${id}/pause`, { method: "POST" }); loadTasks(); loadDashboard(); toast("已暂停", "ok"); }
-    catch (e) { toast("暂停失败: " + e.message, "err"); }
+function navigate() {
+  const key = location.hash.slice(1);
+  tab = Object.hasOwn(titles, key) ? key : "dashboard";
+  for (const link of document.querySelectorAll("[data-tab]")) {
+    link.dataset.tab === tab
+      ? link.setAttribute("aria-current", "page")
+      : link.removeAttribute("aria-current");
+    $("#page-" + link.dataset.tab).hidden = link.dataset.tab !== tab;
+  }
+  $("#page-title").textContent = titles[tab];
+  document.title = titles[tab] + " · 声序";
+  refresh();
 }
-async function resumeTask(id) {
-    try { await api(`/api/tasks/${id}/resume`, { method: "POST" }); loadTasks(); loadDashboard(); toast("已恢复", "ok"); }
-    catch (e) { toast("恢复失败: " + e.message, "err"); }
+async function status() {
+  try {
+    const s = await api("status");
+    desktopFiles = s.desktop_files;
+    $("[data-action=folder]").hidden = !desktopFiles;
+    const modes = { browser: "浏览器采集", system: "系统声卡", loopback: "系统回环" };
+    $("#status-bar").textContent =
+      modes[s.capture_mode] + (s.recorder_device_ready ? "已就绪" : "未就绪");
+    $(".system").classList.toggle("ready", s.recorder_device_ready);
+    $(".system").title = s.device_hint;
+  } catch {
+    $("#status-bar").textContent = "服务未连接";
+    $(".system").classList.remove("ready");
+  }
 }
-async function stopTask(id) {
-    if (!confirm("确认停止当前录制？已录部分会保留。")) return;
-    try {
-        await api(`/api/tasks/${id}/stop`, { method: "POST" });
-        toast("已请求停止，稍后结束", "ok");
-        setTimeout(() => { loadTasks(); loadDashboard(); loadRecordings(); }, 4000);
-    } catch (e) { toast("停止失败: " + e.message, "err"); }
+async function editor(t) {
+  const platforms = await api("platforms");
+  editing = t;
+  $("#task-form").reset();
+  $("#editor-title").textContent = t ? "编辑任务" : "新建任务";
+  $("#form-error").hidden = true;
+  $("#f-platform").replaceChildren(...platforms.map((p) => new Option(p.label, p.name)));
+  $("#f-frequency").replaceChildren(...intervalOptions.map((n) => new Option("每 " + n + " 分钟", n)));
+  if (t && !t.interval_minutes) $("#f-frequency").add(new Option("保留原计划 · " + t.cron, "legacy"));
+  $("#f-frequency").value = t ? t.interval_minutes || "legacy" : 10;
+  for (const [field, key] of Object.entries({
+    name: "name",
+    home: "anchor_home",
+    platform: "platform",
+    anchor: "anchor_name",
+    "scan-start": "scan_start",
+    "scan-end": "scan_end",
+  })) {
+    if (t) $("#f-" + field).value = t[key] || "";
+  }
+  $("#editor").showModal();
 }
-
-function showForm() { $("#task-form").classList.remove("hidden"); }
-function hideForm() { $("#task-form").classList.add("hidden"); $("#f-id").value = ""; }
-function resetForm() {
-    formFrequency = null;
-    formCron = "";
-    $("#f-id").value = "";
-    $("#f-name").value = "";
-    $("#f-home").value = "";
-    $("#f-anchor").value = "";
-    uiSet("#f-frequency", "10", true);
-    const firstPlatform = $("#f-platform")._uiSelect?.root.querySelector(".ui-option[data-value]")?.dataset.value || "";
-    uiSet("#f-platform", firstPlatform, true);
-    timePickers.start.set("");
-    timePickers.end.set("");
-}
-
-$("#btn-add").onclick = () => { resetForm(); showForm(); };
-
-async function editTask(id) {
-    const tasks = await api("/api/tasks");
-    const t = tasks.find(x => x.id === id);
-    if (!t) return;
-    formFrequency = minutesFromCron(t.cron, t.interval_minutes);
-    formCron = t.cron || "";
-    $("#f-id").value = t.id;
-    $("#f-name").value = t.name;
-    uiSet("#f-platform", t.platform, true);
-    $("#f-home").value = t.anchor_home;
-    $("#f-anchor").value = t.anchor_name || "";
-    uiSet("#f-frequency", formFrequency === null ? "" : String(formFrequency), true);
-    timePickers.start.set(t.scan_start || "");
-    timePickers.end.set(t.scan_end || "");
-    showForm();
-}
-
-async function saveTask() {
-    const id = $("#f-id").value;
-    const start = timePickers.start.read();
-    const end = timePickers.end.read();
-    const minutes = Number(uiValue("#f-frequency"));
-    if (!INTERVALS.includes(minutes)) { toast("请选择检查频率", "err"); return; }
-    if (!start.ok || !end.ok) { toast("时分需同时选择，或起始/结束都选「不限」", "err"); return; }
+$("#task-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    const home = $("#f-home").value.trim();
     const body = {
-        name: $("#f-name").value.trim(),
-        platform: uiValue("#f-platform"),
-        anchor_home: $("#f-home").value.trim(),
-        anchor_name: $("#f-anchor").value.trim(),
-        cron: minutes === formFrequency ? formCron : cronFromMinutes(minutes),
-        interval_minutes: minutes,
-        scan_start: start.value,
-        scan_end: end.value,
+      name: $("#f-name").value.trim(),
+      anchor_home: home,
+      anchor_name: $("#f-anchor").value.trim(),
+      platform: $("#f-platform").value,
+      scan_start: $("#f-scan-start").value,
+      scan_end: $("#f-scan-end").value,
     };
-    if (!body.name || !body.anchor_home) { toast("任务名 / 主播主页为必填", "err"); return; }
+    if (!body.name) throw new Error("请输入任务名称");
+    if (!/^https?:\/\/(www\.)?douyin\.com\/user\/[^/?#]+(?:[/?#]|$)/i.test(home))
+      throw new Error("请填写抖音主播主页，例如 https://www.douyin.com/user/…");
+    const value = $("#f-frequency").value;
+    if (value !== "legacy") body.interval_minutes = Number(value);
+    await api(editing ? "tasks/" + editing.id : "tasks", editing ? "PUT" : "POST", body);
+    $("#editor").close();
+    location.hash = "tasks";
+    await refresh();
+    notify("任务已保存");
+  } catch (e) {
+    $("#form-error").hidden = false;
+    $("#form-error").textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+};
+function confirmAction(title, message, run, files = false) {
+  $("#confirm-title").textContent = title;
+  $("#confirm-message").textContent = message;
+  $("#confirm-submit").textContent = title;
+  $("#delete-files").checked = false;
+  $(".check").hidden = !files;
+  pendingConfirm = run;
+  $("#confirm-dialog").returnValue = "cancel";
+  $("#confirm-dialog").showModal();
+}
+$("#confirm-dialog").onclose = async () => {
+  if ($("#confirm-dialog").returnValue !== "confirm") return;
+  try {
+    await pendingConfirm($("#delete-files").checked);
+    await refresh();
+  } catch (e) {
+    notify(e.message);
+  }
+};
+let sentenceButtons = [];
+let highlighted;
+let manuscript = "";
+
+function openReader(r) {
+  sentenceButtons = [];
+  highlighted = null;
+  manuscript = "";
+  $("#reader-tools").hidden = true;
+  $("#asr-progress").hidden = true;
+  $("#sentence-view").setAttribute("aria-pressed", "false");
+  $("#transcript-body").classList.remove("sentences");
+  reading = r;
+  readerState = null;
+  $("#reader-title").textContent = r.task_name || "任务 #" + r.task_id;
+  $("#record-meta").textContent = [
+    r.start_time,
+    r.end_time ? "结束 " + r.end_time : "",
+    duration(r.duration),
+    size(r.file_size),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  audio.hidden = !r.file_url;
+  if (r.file_url) audio.src = r.file_url;
+  $("#file-actions").innerHTML =
+    (r.file_url
+      ? '<a download href="' +
+        esc(r.file_url) +
+        '">下载音频</a>' +
+        (desktopFiles ? action("open", "系统播放", r.id) + action("reveal", "定位文件", r.id) : "")
+      : "") + (r.status !== "recording" ? action("delete-rec", "删除录音", r.id, "danger") : "");
+  $("#transcript-status").textContent =
+    r.status === "recording"
+      ? "录制结束后将自动转写"
+      : r.status === "failed"
+        ? r.error || "录制失败"
+        : "正在读取转写状态…";
+  $("#transcript-body").replaceChildren();
+  if (!$("#reader").open) $("#reader").showModal();
+  if (r.status === "completed") loadTranscript();
+}
+async function loadTranscript() {
+  const rec = reading;
+  if (!rec || rec.status !== "completed") return;
+  try {
+    const data = await api("recordings/" + rec.id + "/transcript");
+    if (reading !== rec) return;
+    const groups = data.paragraphs;
+    const label = transcriptStates[data.status];
+    readerState = data.status;
+    $("#transcript-status").textContent =
+      data.status === "completed"
+        ? groups.length
+          ? label + " · " + groups.length + " 段 · " + groups.reduce((n, g) => n + g.length, 0) + " 句"
+          : "转写完成，未识别到语音。"
+        : data.status === "failed"
+          ? "转写失败 · " + data.error
+          : data.status === "running"
+            ? data.processed
+              ? "正在转写 · 已处理至 " + duration(data.processed)
+              : "正在转写，可关闭窗口，稍后从资料库查看。"
+            : label;
+    $("#asr-progress").hidden = data.status !== "running";
+    if (data.status === "completed") {
+      $("#reader-tools").hidden = !groups.length;
+      $("#sentence-view").hidden = !rec.file_url;
+      manuscript = groups.map((group) => group.map((line) => line.text).join(" ")).join("\n\n");
+      $("#transcript-body").innerHTML = groups
+        .map((group) => {
+          const lines = group
+            .map((line) =>
+              rec.file_url
+                ? `<button class="sentence" data-start="${Number(line.start)}" data-end="${Number(line.end)}" data-time="${duration(line.start)}" title="从 ${duration(line.start)} 播放">${esc(line.text)}</button>`
+                : esc(line.text),
+            )
+            .join(" ");
+          return `<div class="passage"><time>${duration(group[0].start)}</time><p>${lines}</p></div>`;
+        })
+        .join("");
+      sentenceButtons = Array.from(document.querySelectorAll(".sentence"));
+    } else {
+      $("#transcript-body").innerHTML =
+        ["unavailable", "failed"].includes(data.status) && rec.file_exists
+          ? action("retry", data.status === "failed" ? "重试转写" : "生成文稿", rec.id)
+          : "";
+    }
+  } catch (e) {
+    if (reading === rec) {
+      readerState = null;
+      $("#transcript-status").textContent = "读取失败，将自动重试。" + e.message;
+    }
+  }
+}
+$("#sentence-view").onclick = (event) => {
+  const enabled = $("#transcript-body").classList.toggle("sentences");
+  event.currentTarget.setAttribute("aria-pressed", String(enabled));
+};
+$("#copy-text").onclick = async () => {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(manuscript);
+    } else {
+      const field = document.createElement("textarea");
+      field.value = manuscript;
+      $("#reader").append(field);
+      field.select();
+      const copied = document.execCommand("copy");
+      field.remove();
+      $("#copy-text").focus();
+      if (!copied) throw new Error();
+    }
+    $("#transcript-status").textContent = "全文已复制";
+  } catch {
+    $("#transcript-status").textContent = "无法访问剪贴板，请选择文稿后复制。";
+  }
+};
+audio.ontimeupdate = () => {
+  let left = 0,
+    right = sentenceButtons.length;
+  while (left < right) {
+    const middle = Math.floor((left + right) / 2);
+    if (Number(sentenceButtons[middle].dataset.start) <= audio.currentTime) left = middle + 1;
+    else right = middle;
+  }
+  const candidate = sentenceButtons[left - 1];
+  const next = candidate && audio.currentTime < Number(candidate.dataset.end) ? candidate : null;
+  if (next !== highlighted) {
+    highlighted?.classList.remove("current");
+    next?.classList.add("current");
+    highlighted = next;
+  }
+};
+$("#reader").onclose = () => {
+  reading = null;
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+};
+async function operate(name, id) {
+  const t = tasks.find((t) => t.id === id);
+  if (name === "edit") return editor(t);
+  if (name === "read") return openReader(records.find((r) => r.id === id));
+  if (name === "refresh") return refresh();
+  if (name === "folder") {
+    await api("recordings/folder", "POST");
+    return notify("已请求打开录音目录");
+  }
+  if (name === "open" || name === "reveal") {
+    await api("recordings/" + id + "/" + name, "POST");
+    return;
+  }
+  if (name === "retry") {
+    await api("recordings/" + id + "/transcript", "POST");
+    await loadTranscript();
+    return refresh();
+  }
+  if (name === "delete-task")
+    return confirmAction(
+      "删除任务",
+      "将删除「" + t.name + "」及关联的录音记录和文稿。",
+      (files) => api("tasks/" + id + "?delete_files=" + files, "DELETE"),
+      t.recording_count > 0,
+    );
+  if (name === "delete-rec")
+    return confirmAction("删除录音", "本地音频和转写文稿将一并删除。", async () => {
+      await api("recordings/" + id, "DELETE");
+      $("#reader").close();
+    });
+  if (name === "stop")
+    return confirmAction("停止录制", "保存已录音频后，系统会自动开始转写。", () =>
+      api("tasks/" + id + "/stop", "POST"),
+    );
+  if (name === "toggle") await api("tasks/" + id, "PUT", { enabled: !t.enabled });
+  else {
+    const result = await api("tasks/" + id + "/" + name, "POST");
+    notify(result.msg || (name === "pause" ? "已请求暂停" : "已请求恢复"));
+  }
+  await refresh();
+}
+document.addEventListener("click", async (event) => {
+  const b = event.target.closest("button");
+  if (!b) return;
+  if (b.hasAttribute("data-close")) {
+    b.closest("dialog").close();
+    return;
+  }
+  if (b.classList.contains("sentence")) {
+    audio.currentTime = Number(b.dataset.start);
     try {
-        if (id) await api(`/api/tasks/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        else await api("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        hideForm(); loadTasks(); toast("任务已保存", "ok");
-    } catch (e) { toast("保存失败: " + e.message, "err"); }
-}
-
-async function delTask(id, recCount) {
-    if (!confirm("确认删除该任务？")) return;
-    let delFiles = false;
-    if (recCount > 0) delFiles = confirm("该任务有 " + recCount + " 个产物，是否同时删除本地音频文件？\n（点「取消」仅删任务记录，保留文件）");
-    try {
-        await api(`/api/tasks/${id}?delete_files=${delFiles}`, { method: "DELETE" });
-        loadTasks(); loadRecordings(); toast("任务已删除" + (delFiles ? "（含产物文件）" : ""), "ok");
-    } catch (e) { toast("删除失败: " + e.message, "err"); }
-}
-
-async function toggleTask(id, enabled) {
-    await api(`/api/tasks/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: !!enabled }) });
-    loadTasks();
-}
-
-async function runTask(id) {
-    try {
-        const j = await api(`/api/tasks/${id}/run`, { method: "POST" });
-        toast(j.msg || "已触发检查", j.ok ? "ok" : "err");
-        setTimeout(loadStatus, 3000);
-        setTimeout(loadDashboard, 15000);
-    } catch (e) { toast("触发失败: " + e.message, "err"); }
-}
-
-// ---------- 产物 ----------
-async function loadRecordings() {
-    const tid = uiValue("#filter-task");
-    const list = await api(tid ? `/api/recordings?task_id=${tid}` : "/api/recordings");
-    $("#recording-tbody").innerHTML = list.length ? list.map(r => `
-        <tr>
-            <td class="mono muted">${r.id}</td>
-            <td><span class="task-ref">任务 #${r.task_id}</span></td>
-            <td class="mono">${r.start_time || "-"}</td>
-            <td class="mono">${r.end_time || "-"}</td>
-            <td class="mono">${fmtDur(r.duration)}</td>
-            <td class="mono">${fmtSize(r.file_size)}</td>
-            <td>${statusTag(r.status)}</td>
-            <td><div class="row-actions">${recOps(r)}</div></td>
-        </tr>`).join("") : '<tr><td colspan="8" class="empty">暂无产物</td></tr>';
-}
-
-async function openRec(id) {
-    try { await api(`/api/recordings/${id}/open`, { method: "POST" }); toast("已用默认应用打开", "ok"); }
-    catch (e) { toast("打开失败: " + e.message, "err"); }
-}
-async function revealRec(id) {
-    try { await api(`/api/recordings/${id}/reveal`, { method: "POST" }); toast("已在文件管理器显示", "ok"); }
-    catch (e) { toast("失败: " + e.message, "err"); }
-}
-async function delRec(id) {
-    if (!confirm("确认删除该产物？将同时删除本地音频文件，不可恢复。")) return;
-    try { await api(`/api/recordings/${id}`, { method: "DELETE" }); loadRecordings(); loadDashboard(); toast("产物已删除", "ok"); }
-    catch (e) { toast("删除失败: " + e.message, "err"); }
-}
-async function openFolder() {
-    try { await api("/api/recordings/folder", { method: "POST" }); toast("已打开产物文件夹", "ok"); }
-    catch (e) { toast("失败: " + e.message, "err"); }
-}
-
-// ---------- 初始化 ----------
-initSelects();
-loadStatus();
-loadPlatforms();
-loadDashboard();
-setInterval(() => { loadStatus(); if (!$("#page-dashboard").classList.contains("hidden")) loadDashboard(); }, 15000);
+      await audio.play();
+    } catch (e) {
+      $("#transcript-status").textContent = "播放失败 · " + e.message;
+    }
+    return;
+  }
+  if (b.id !== "btn-add" && !b.dataset.action) return;
+  b.disabled = true;
+  try {
+    if (b.id === "btn-add") await editor();
+    else await operate(b.dataset.action, Number(b.dataset.id));
+  } catch (e) {
+    if (reading) $("#transcript-status").textContent = e.message;
+    else notify(e.message);
+  } finally {
+    b.disabled = false;
+  }
+});
+$("#filter-task").onchange = refresh;
+window.addEventListener("hashchange", () => {
+  navigate();
+  $("#main").focus();
+});
+$("#page-date").textContent = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+  weekday: "long",
+}).format(new Date());
+navigate();
+status();
+setInterval(() => {
+  if (!document.hidden) {
+    refresh();
+    if (reading && !["completed", "failed", "unavailable"].includes(readerState)) loadTranscript();
+  }
+}, 3500);
+setInterval(() => {
+  if (!document.hidden) status();
+}, 30000);

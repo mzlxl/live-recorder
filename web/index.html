@@ -1,133 +1,151 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>直播录制系统</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <header class="topbar">
-        <div class="brand">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="8 12 12 15 16 9"></polyline>
-            </svg>
-            <span>直播录制系统</span>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#102c32" />
+    <title>声序 · 直播录制工作台</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">跳至内容</a>
+    <aside class="rail">
+      <div class="brand">
+        <b class="brand-mark" aria-hidden="true">∿</b>
+        <div>声序<small>直播录制工作台</small></div>
+      </div>
+      <nav aria-label="工作台导航">
+        <a href="#dashboard" data-tab="dashboard"><i data-icon="dashboard"></i>录制总览</a>
+        <a href="#tasks" data-tab="tasks"><i data-icon="tasks"></i>录制任务</a>
+        <a href="#recordings" data-tab="recordings"><i data-icon="library"></i>录音与文稿</a>
+      </nav>
+      <div class="system"><span class="dot"></span><span id="status-bar">正在连接采集设备…</span></div>
+    </aside>
+    <main tabindex="-1" id="main">
+      <header class="page-head">
+        <div>
+          <div id="page-date"></div>
+          <h1 id="page-title">录制总览</h1>
         </div>
-        <nav class="menu">
-            <button class="tab active" data-tab="dashboard">录制看板</button>
-            <button class="tab" data-tab="tasks">任务列表</button>
-            <button class="tab" data-tab="recordings">录制产物</button>
-        </nav>
-        <div id="status-bar" class="statusbar">加载中…</div>
-    </header>
-
-    <main>
-        <!-- 录制看板 -->
-        <section id="page-dashboard">
-            <div class="cards" id="stat-cards"></div>
-
-            <div class="panel">
-                <div class="panel-head">
-                    <h3>正在录制</h3>
-                </div>
-                <div id="running-list" class="running-list"></div>
+        <button class="primary" id="btn-add"><i data-icon="plus"></i>新建任务</button>
+      </header>
+      <p id="load-error" role="alert" hidden></p>
+      <section id="page-dashboard">
+        <div class="monitor">
+          <div class="monitor-copy">
+            <div class="monitor-label"><i data-icon="radio"></i>实时监听</div>
+            <div id="running-list">正在读取任务…</div>
+          </div>
+          <div class="meter" aria-hidden="true"></div>
+        </div>
+        <div class="metrics" id="stat-cards"></div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>最近录音</h2>
+            <a href="#recordings">进入资料库 →</a>
+          </div>
+          <div id="dash-recent"></div>
+        </div>
+      </section>
+      <section id="page-tasks" hidden>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>任务列表</h2>
+            <span class="meta" id="task-count"></span>
+          </div>
+          <div id="task-list"></div>
+        </div>
+      </section>
+      <section id="page-recordings" hidden>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>录音资料库</h2>
+            <div class="toolbar">
+              <label class="sr" for="filter-task">按任务筛选</label
+              ><select id="filter-task">
+                <option value="">全部任务</option></select
+              ><button data-action="folder">打开目录</button
+              ><button data-action="refresh" aria-label="刷新资料库"><i data-icon="refresh"></i></button>
             </div>
-
-            <div class="panel">
-                <div class="panel-head">
-                    <h3>今日产物</h3>
-                    <button class="btn ghost sm btn-viewall" onclick="switchTab('recordings')">查看全部</button>
-                </div>
-                <div class="table-wrap">
-                    <table class="data-table">
-                        <thead>
-                            <tr><th>任务</th><th>开始</th><th>时长</th><th>大小</th><th>状态</th><th>操作</th></tr>
-                        </thead>
-                        <tbody id="dash-recent"></tbody>
-                    </table>
-                </div>
-            </div>
-        </section>
-
-        <!-- 任务列表 -->
-        <section id="page-tasks" class="hidden">
-            <div class="panel-head">
-                <h3>任务管理</h3>
-                <button class="btn primary btn-add" id="btn-add">新增任务</button>
-            </div>
-
-            <div id="task-form" class="panel hidden">
-                <input type="hidden" id="f-id">
-                <div class="form-grid">
-                    <div class="form-row"><label>任务名 *</label><input id="f-name" placeholder="如：企智AI直播"></div>
-                    <div class="form-row"><label>平台</label><div id="f-platform" class="field-control"></div></div>
-                    <div class="form-row"><label>主播主页 *</label><input id="f-home" placeholder="https://www.douyin.com/user/xxxx"></div>
-                    <div class="form-row"><label>主播名</label><input id="f-anchor" placeholder="展示用（可选）"></div>
-                    <div class="form-row">
-                        <label>检查频率 *</label>
-                        <div class="field-stack">
-                            <div id="f-frequency" class="field-control"></div>
-                            <span class="field-hint">仅在扫描时段内触发检查</span>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <label>扫描时段</label>
-                        <div class="field-stack">
-                            <div class="time-range">
-                                <div id="f-scan-start" class="field-control"></div>
-                                <span class="time-sep">至</span>
-                                <div id="f-scan-end" class="field-control"></div>
-                            </div>
-                            <span class="field-hint">仅选择时、分；结束时间可早于开始时间，表示跨至次日（如 22:00 至 01:00）</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="form-actions">
-                    <button class="btn primary" onclick="saveTask()">保存</button>
-                    <button class="btn" onclick="hideForm()">取消</button>
-                </div>
-            </div>
-
-            <div class="table-wrap">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th><th>任务名</th><th>平台</th><th>主播</th><th>检查频率</th>
-                            <th>扫描时段</th><th>状态</th><th>产物数</th><th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="task-tbody"></tbody>
-                </table>
-            </div>
-        </section>
-
-        <!-- 录制产物 -->
-        <section id="page-recordings" class="hidden">
-            <div class="panel-head">
-                <h3>录制产物</h3>
-                <div class="toolbar">
-                    <div id="filter-task" class="field-control"></div>
-                    <button class="btn ghost" onclick="openFolder()">打开产物文件夹</button>
-                    <button class="btn ghost" onclick="loadRecordings()">刷新</button>
-                </div>
-            </div>
-            <div class="table-wrap">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th><th>任务</th><th>开始</th><th>结束</th><th>时长</th>
-                            <th>大小</th><th>状态</th><th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="recording-tbody"></tbody>
-                </table>
-            </div>
-        </section>
+          </div>
+          <div id="recording-list"></div>
+        </div>
+      </section>
     </main>
-
-    <div id="toast" class="toast hidden"></div>
+    <dialog id="editor" aria-labelledby="editor-title">
+      <form id="task-form">
+        <header>
+          <h2 id="editor-title">新建任务</h2>
+          <button type="button" class="close" data-close aria-label="关闭">
+            <i data-icon="close"></i>
+          </button>
+        </header>
+        <div class="form-body">
+          <label>任务名称<input id="f-name" required maxlength="160" autofocus /></label>
+          <label
+            >主播主页<input id="f-home" type="url" placeholder="https://www.douyin.com/user/…" required
+          /></label>
+          <div class="pair">
+            <label>直播平台<select id="f-platform" required></select></label
+            ><label>主播名称（选填）<input id="f-anchor" /></label>
+          </div>
+          <label>检查频率<select id="f-frequency" required></select></label>
+          <fieldset>
+            <legend>扫描时段</legend>
+            <div class="pair">
+              <label>开始<input id="f-scan-start" type="time" /></label
+              ><label>结束<input id="f-scan-end" type="time" /></label>
+            </div>
+            <small>留空表示不限。结束时间早于开始时间时，扫描至次日。</small>
+          </fieldset>
+          <p id="form-error" class="error" role="alert" hidden></p>
+        </div>
+        <footer>
+          <button type="button" data-close>取消</button
+          ><button class="primary" type="submit">保存任务</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+      <form method="dialog">
+        <header><h2 id="confirm-title"></h2></header>
+        <div class="form-body">
+          <p id="confirm-message"></p>
+          <label class="check" hidden
+            ><input id="delete-files" type="checkbox" />同时删除本地音频文件</label
+          >
+        </div>
+        <footer>
+          <button value="cancel" autofocus>取消</button
+          ><button class="danger" value="confirm" id="confirm-submit">确认</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog id="reader" aria-labelledby="reader-title">
+      <header>
+        <div>
+          <small>录音详情</small>
+          <h2 id="reader-title">录音与文稿</h2>
+        </div>
+        <button data-close class="close" aria-label="关闭"><i data-icon="close"></i></button>
+      </header>
+      <div class="form-body">
+        <div id="record-meta" class="meta"></div>
+        <audio controls preload="metadata" id="player"></audio>
+        <div id="file-actions" class="toolbar"></div>
+        <div class="manuscript">
+          <h3>转写文稿</h3>
+          <div id="transcript-status" role="status"></div>
+          <progress id="asr-progress" aria-label="正在识别语音" hidden></progress>
+          <div id="reader-tools" class="toolbar" hidden>
+            <button id="sentence-view" type="button" aria-pressed="false">逐句回听</button>
+            <button id="copy-text" type="button">复制全文</button>
+          </div>
+          <div id="transcript-body"></div>
+        </div>
+      </div>
+    </dialog>
+    <div class="toast" id="toast" role="status"></div>
     <script src="app.js"></script>
-</body>
+  </body>
 </html>

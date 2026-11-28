@@ -38,11 +38,10 @@ class DouyinPlatform(BasePlatform):
     def is_live(self, page) -> bool:
         if self._live_entry_link(page):
             return True
-        try:
-            body = page.evaluate("document.body.innerText")
-            return "直播中" in body
-        except Exception:
-            return False
+        body = page.locator("body").inner_text(timeout=10000)
+        if not body.strip() or not page.locator("h1").count():
+            raise RuntimeError("主播主页未正常显示，无法确认开播状态，请检查主页或稍后重试")
+        return "直播中" in body
 
     def enter_live(self, page) -> str:
         link = self._live_entry_link(page)

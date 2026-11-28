@@ -1,0 +1,9 @@
+*
+!app/
+!app/**
+!web/
+!web/**
+!config.py
+!requirements.txt
+!run.py
+**/__pycache__/

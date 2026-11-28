@@ -16,6 +16,11 @@ if os.path.isdir(_local_browsers):
 HOST = os.environ.get("RECORDER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("RECORDER_PORT", "8000"))
 
+# 轻量量化配置用于 Linux 服务器；桌面沿用本地 Whisper。
+def whisper_cpp_model():
+    return os.environ.get("RECORDER_WHISPER_CPP_MODEL") if platform.system() == "Linux" else None
+
+
 # 单次录制最大时长（秒），兜底防止检测失效录不停
 MAX_RECORD_DURATION = int(os.environ.get("RECORDER_MAX_DURATION", str(12 * 3600)))
 # 录制中轮询下播的间隔（秒）
@@ -77,6 +82,8 @@ def browser_available():
         roots.append(_local_browsers)
     if platform.system() == "Windows":
         roots.append(os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright"))
+    elif platform.system() == "Darwin":
+        roots.append(os.path.expanduser("~/Library/Caches/ms-playwright"))
     else:
         roots.append(os.path.expanduser("~/.cache/ms-playwright"))
     for root in roots:

@@ -4,6 +4,7 @@
 轻量方案：创建 null-sink 作为虚拟声卡，浏览器音频路由到它，ffmpeg 录其 monitor。
 """
 import os
+import subprocess
 
 from app.recorder.base import BaseRecorder
 
@@ -27,3 +28,12 @@ class LinuxRecorder(BaseRecorder):
             "-vn", "-c:a", "aac", "-b:a", "192k",
             "-f", "mp4", out_path,
         ]
+
+    def device_ready(self):
+        try:
+            result = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True,
+                                    text=True, timeout=3, check=True)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return any(len(row) > 1 and row[1] == self.DEVICE
+                   for row in (line.split() for line in result.stdout.splitlines()))

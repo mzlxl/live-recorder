@@ -7,6 +7,7 @@
 """
 import base64
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -20,17 +21,22 @@ _START_JS = """() => {
     if (!AudioCtx || !window.MediaRecorder) throw new Error('当前浏览器不支持 Web Audio / MediaRecorder');
     const ctx = new AudioCtx();
     const dest = ctx.createMediaStreamDestination();
-    const connected = new WeakSet();
+    const connected = new WeakMap();
     let count = 0;
     const connect = (el) => {
-        if (!el || connected.has(el)) return;
+        const stream = el.srcObject;
+        const track = stream?.getAudioTracks?.()[0];
+        const previous = connected.get(el);
+        if (previous && previous.track === track) return;
         try {
             el.muted = false;
             el.volume = 1;
-            const src = ctx.createMediaElementSource(el);
+            const src = track ? ctx.createMediaStreamSource(new MediaStream([track]))
+                              : ctx.createMediaElementSource(el);
+            if (previous) previous.src.disconnect();
             src.connect(dest);
-            src.connect(ctx.destination);
-            connected.add(el);
+            if (!track) src.connect(ctx.destination);
+            connected.set(el, {src, track});
             count++;
         } catch (e) {}
     };
@@ -48,19 +54,24 @@ _START_JS = """() => {
     const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
         .find(m => MediaRecorder.isTypeSupported(m)) || '';
     const rec = new MediaRecorder(dest.stream, mime ? {mimeType: mime} : undefined);
+    let pending = Promise.resolve();
     rec.ondataavailable = (e) => {
         if (!e.data || !e.data.size) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            const value = String(reader.result || '');
-            const comma = value.indexOf(',');
-            if (comma >= 0) window.__lrChunk(value.slice(comma + 1));
-        };
-        reader.readAsDataURL(e.data);
+        pending = pending.then(() => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = reject;
+            reader.onload = () => {
+                const value = String(reader.result || '');
+                const comma = value.indexOf(',');
+                Promise.resolve(window.__lrChunk(value.slice(comma + 1))).then(resolve, reject);
+            };
+            reader.readAsDataURL(e.data);
+        }));
     };
     rec.start(1000);
     if (ctx.state === 'suspended') ctx.resume();
-    window.__lrCapture = {ctx, dest, rec, observer, connected, count};
+    const scan = setInterval(() => document.querySelectorAll('video,audio').forEach(connect), 1200);
+    window.__lrCapture = {ctx, dest, rec, observer, count, scan, drained: () => pending};
     return {mime: rec.mimeType, elements: count};
 }"""
 
@@ -88,7 +99,10 @@ _STOP_JS = """async () => {
             c.rec.stop();
         });
     }
+    await c.drained();
+    clearInterval(c.scan);
     c.observer.disconnect();
+    await c.ctx.close();
     window.__lrCapture = null;
     return {stopped: true};
 }"""
@@ -117,6 +131,7 @@ class BrowserAudioCapture:
         fd, self.raw_path = tempfile.mkstemp(prefix="live_recorder_", suffix=".webm")
         os.close(fd)
         self._raw = open(self.raw_path, "wb")
+        self._started_at = time.monotonic()
         self._done = False
         self._returncode = None
         self._error = ""
@@ -182,7 +197,6 @@ class BrowserAudioCapture:
         except Exception as e:
             if not allow_error:
                 self._error = f"停止浏览器采集失败: {e}"
-        time.sleep(0.3)  # 等待最后的 dataavailable 分片写入
         try:
             self._raw.close()
         except Exception:
@@ -191,24 +205,23 @@ class BrowserAudioCapture:
         if raw_size == 0:
             self._returncode = 1
             self._error = self._error or "浏览器未采集到音频数据（页面可能没有播放中的视频/音频）"
+            os.remove(self.raw_path)
             return
         cmd = [
-            self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", self.raw_path, "-vn", "-c:a", "aac", "-b:a", "192k",
+            self.ffmpeg_bin, "-y", "-hide_banner", "-nostats",
+            "-i", self.raw_path, "-vn", "-af", "volumedetect", "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart", self.out_path,
         ]
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            timeout = max(180, time.monotonic() - self._started_at)
+            r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout)
             if r.returncode != 0:
                 raise RuntimeError((r.stderr or "ffmpeg 转码失败").strip()[-300:])
             if not os.path.exists(self.out_path) or os.path.getsize(self.out_path) == 0:
                 raise RuntimeError("转码后产物为空")
-            check = subprocess.run(
-                [self.ffmpeg_bin, "-v", "error", "-i", self.out_path, "-f", "null", "-"],
-                capture_output=True, text=True, timeout=60,
-            )
-            if check.returncode != 0:
-                raise RuntimeError("产物无法解码：" + (check.stderr or "").strip()[-200:])
+            peak = re.search(r"max_volume: ([-.0-9]+) dB", r.stderr)
+            if peak and float(peak[1]) <= -90:
+                raise RuntimeError("采集到的音轨全程静音，请检查直播间声音或配置系统音频设备")
             self._returncode = 0
         except Exception as e:
             self._returncode = 1

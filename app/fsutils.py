@@ -9,6 +9,10 @@ def _sys():
     return platform.system()
 
 
+def desktop_available():
+    return _sys() != "Linux" or bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+
+
 def _require_file(path):
     if not path or not os.path.isfile(path):
         raise FileNotFoundError("产物文件不存在（可能录制失败或已被删除）")
