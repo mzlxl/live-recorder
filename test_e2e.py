@@ -46,7 +46,7 @@ def isolated_service(work):
 
 def layouts(browser, url):
     page = browser.new_page(reduced_motion="reduce")
-    for w, h in [(1440, 900), (375, 667), (844, 390), (768, 1024)]:
+    for w, h in [(1920, 1080), (1440, 900), (375, 667), (844, 390), (768, 1024)]:
         page.set_viewport_size({"width": w, "height": h})
         page.goto(url)
         for key in ("tasks", "recordings", "dashboard"):
@@ -75,20 +75,22 @@ def verify_live(browser, url, profile, work):
     page.locator("#f-scan-start").fill("22:00")
     page.locator("#f-scan-end").fill("01:00")
     page.get_by_text("保存任务", exact=True).click()
-    expect(page.locator("#task-list")).to_contain_text("次日")
+    expect(page.locator("#task-meta")).to_contain_text("次日")
     page.get_by_role("button", name="编辑").click()
     expect(page.locator("#f-frequency")).to_have_value("120")
     page.locator("#f-scan-start").fill("")
     page.locator("#f-scan-end").fill("")
     page.get_by_text("保存任务", exact=True).click()
-    page.get_by_role("button", name="停用").click()
-    page.get_by_role("button", name="启用").click()
+    page.locator("#task-actions summary").click()
+    page.get_by_role("button", name="停用", exact=True).click()
+    page.locator("#task-actions summary").click()
+    page.get_by_role("button", name="启用", exact=True).click()
     page.get_by_role("button", name="立即检查").click()
     pause = page.get_by_role("button", name="暂停", exact=True)
     try:
         pause.wait_for(timeout=120000)
     except Exception as e:
-        raise AssertionError("未进入真实录制：" + page.locator("#task-list").inner_text()) from e
+        raise AssertionError("未进入真实录制：" + page.locator("#task-detail").inner_text()) from e
     time.sleep(12)
     pause.click()
     expect(page.locator("#task-list")).to_contain_text("已暂停")
@@ -97,6 +99,13 @@ def verify_live(browser, url, profile, work):
     page.wait_for_timeout(18000)
     page.get_by_role("button", name="停止").click()
     page.locator("#confirm-submit").click()
+    expect(page.locator("#inline-reader .sentence").first).to_be_visible(timeout=300000)
+    page.locator("#sentence-view").click()
+    page.locator("#inline-reader .sentence").first.click()
+    page.wait_for_function("()=>!player.paused && player.currentTime > 0.1")
+    page.locator("#paragraph-view").click()
+    expect(page.locator("#paragraph-view")).to_have_attribute("aria-pressed", "true")
+    print("PASS 正式工作台内联转写、逐句回听与段落切换", flush=True)
     page.locator("[data-tab=recordings]").click()
     page.locator("#filter-task").select_option(index=1)
     page.get_by_role("button", name="刷新资料库").click()
@@ -134,6 +143,7 @@ def verify_live(browser, url, profile, work):
     if desktop:
         page.get_by_role("button", name="打开目录").click()
     page.locator("[data-tab=tasks]").click()
+    page.locator("#task-actions summary").click()
     page.get_by_role("button", name="删除", exact=True).click()
     page.locator("#confirm-submit").click()
     expect(page.locator("#task-list")).to_contain_text("还没有")
@@ -187,7 +197,7 @@ def main():
                 browser = getattr(playwright, name).launch(headless=True, **options)
                 try:
                     layouts(browser, url)
-                    print(f"PASS {name} 四种视口、导航、表单和键盘关闭", flush=True)
+                    print(f"PASS {name} 五种视口、导航、表单和键盘关闭", flush=True)
                 finally:
                     browser.close()
             browser = playwright.chromium.launch(headless=True, executable_path=config.BROWSER_EXECUTABLE)

@@ -3,34 +3,30 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#102c32" />
+    <meta name="theme-color" content="#f4f6fa" />
     <title>声序 · 直播录制工作台</title>
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=a3" />
   </head>
   <body>
     <a class="skip" href="#main">跳至内容</a>
-    <aside class="rail">
-      <div class="brand">
-        <b class="brand-mark" aria-hidden="true">∿</b>
-        <div>声序<small>直播录制工作台</small></div>
-      </div>
+    <header class="appbar">
+      <a class="brand" href="#tasks" aria-label="声序工作台"
+        ><span class="brand-mark"><i data-icon="audio"></i></span>声序</a
+      >
       <nav aria-label="工作台导航">
-        <a href="#dashboard" data-tab="dashboard"><i data-icon="dashboard"></i>录制总览</a>
-        <a href="#tasks" data-tab="tasks"><i data-icon="tasks"></i>录制任务</a>
-        <a href="#recordings" data-tab="recordings"><i data-icon="library"></i>录音与文稿</a>
+        <a href="#tasks" data-tab="tasks"><i data-icon="tasks"></i>工作台</a>
+        <a href="#recordings" data-tab="recordings"><i data-icon="library"></i>录音库</a>
+        <a href="#dashboard" data-tab="dashboard"><i data-icon="dashboard"></i>总览</a>
       </nav>
-      <div class="system"><span class="dot"></span><span id="status-bar">正在连接采集设备…</span></div>
-    </aside>
+      <button class="primary" id="btn-add"><i data-icon="plus"></i>新建任务</button>
+    </header>
     <main tabindex="-1" id="main">
-      <header class="page-head">
-        <div>
-          <div id="page-date"></div>
-          <h1 id="page-title">录制总览</h1>
-        </div>
-        <button class="primary" id="btn-add"><i data-icon="plus"></i>新建任务</button>
-      </header>
       <p id="load-error" role="alert" hidden></p>
-      <section id="page-dashboard">
+      <section id="page-dashboard" class="collection" hidden>
+        <header class="collection-head">
+          <small id="page-date"></small>
+          <h1>录制总览</h1>
+        </header>
         <div class="monitor">
           <div class="monitor-copy">
             <div class="monitor-label"><i data-icon="radio"></i>实时监听</div>
@@ -47,16 +43,47 @@
           <div id="dash-recent"></div>
         </div>
       </section>
-      <section id="page-tasks" hidden>
-        <div class="panel">
-          <div class="panel-head">
-            <h2>任务列表</h2>
+      <section id="page-tasks" class="workspace">
+        <aside class="sidebar" aria-label="选择录制任务">
+          <div class="side-head">
+            <h2>录制任务</h2>
             <span class="meta" id="task-count"></span>
           </div>
+          <label class="task-search"
+            ><i data-icon="search"></i
+            ><input type="search" id="task-search" aria-label="查找任务" placeholder="查找任务"
+          /></label>
           <div id="task-list"></div>
+          <div class="system">
+            <span class="dot"></span><span id="status-bar">正在连接设备…</span>
+          </div>
+        </aside>
+        <div class="detail">
+          <div id="task-empty" hidden></div>
+          <div id="task-detail" hidden>
+            <small class="crumb">工作台　/　录制任务</small>
+            <header class="task-head">
+              <div>
+                <h1 id="task-title"></h1>
+                <p class="meta" id="task-meta"></p>
+              </div>
+              <div id="task-actions" class="actions"></div>
+            </header>
+            <p class="last-result" id="task-result" hidden></p>
+            <div class="history">
+              <label for="task-record">任务录音 <span id="record-count"></span></label
+              ><select id="task-record"></select>
+            </div>
+            <div id="inline-reader"></div>
+            <div id="record-empty" hidden></div>
+          </div>
         </div>
       </section>
-      <section id="page-recordings" hidden>
+      <section id="page-recordings" class="collection" hidden>
+        <header class="collection-head">
+          <small>工作空间　/　资料库</small>
+          <h1>录音与文稿</h1>
+        </header>
         <div class="panel">
           <div class="panel-head">
             <h2>录音资料库</h2>
@@ -65,7 +92,9 @@
               ><select id="filter-task">
                 <option value="">全部任务</option></select
               ><button data-action="folder">打开目录</button
-              ><button data-action="refresh" aria-label="刷新资料库"><i data-icon="refresh"></i></button>
+              ><button data-action="refresh" aria-label="刷新资料库">
+                <i data-icon="refresh"></i>
+              </button>
             </div>
           </div>
           <div id="recording-list"></div>
@@ -83,7 +112,11 @@
         <div class="form-body">
           <label>任务名称<input id="f-name" required maxlength="160" autofocus /></label>
           <label
-            >主播主页<input id="f-home" type="url" placeholder="https://www.douyin.com/user/…" required
+            >主播主页<input
+              id="f-home"
+              type="url"
+              placeholder="https://www.douyin.com/user/…"
+              required
           /></label>
           <div class="pair">
             <label>直播平台<select id="f-platform" required></select></label
@@ -129,23 +162,43 @@
         </div>
         <button data-close class="close" aria-label="关闭"><i data-icon="close"></i></button>
       </header>
-      <div class="form-body">
-        <div id="record-meta" class="meta"></div>
-        <audio controls preload="metadata" id="player"></audio>
-        <div id="file-actions" class="toolbar"></div>
-        <div class="manuscript">
-          <h3>转写文稿</h3>
-          <div id="transcript-status" role="status"></div>
-          <progress id="asr-progress" aria-label="正在识别语音" hidden></progress>
-          <div id="reader-tools" class="toolbar" hidden>
-            <button id="sentence-view" type="button" aria-pressed="false">逐句回听</button>
-            <button id="copy-text" type="button">复制全文</button>
+      <div id="reader-home">
+        <div class="reading" id="reader-content">
+          <div class="audio-panel" id="audio-panel">
+            <div class="player-head">
+              <strong>录音回听</strong>
+              <canvas
+                id="speech-map"
+                width="460"
+                height="30"
+                role="img"
+                aria-label="已识别语句在录音中的分布"
+                hidden
+              ></canvas>
+            </div>
+            <audio controls preload="metadata" id="player"></audio>
           </div>
-          <div id="transcript-body"></div>
+          <div id="record-meta" class="meta"></div>
+          <div id="file-actions" class="toolbar"></div>
+          <section class="manuscript" aria-label="转写文稿">
+            <div class="manuscript-head">
+              <h3>转写文稿</h3>
+              <div id="reader-tools" class="toolbar" hidden>
+                <div class="mode-switch" role="group" aria-label="文稿阅读方式">
+                  <button id="paragraph-view" type="button" aria-pressed="true">分段阅读</button>
+                  <button id="sentence-view" type="button" aria-pressed="false">逐句回听</button>
+                </div>
+                <button id="copy-text" type="button">复制全文</button>
+              </div>
+            </div>
+            <div id="transcript-status" role="status"></div>
+            <progress id="asr-progress" aria-label="正在识别语音" hidden></progress>
+            <div id="transcript-body"></div>
+          </section>
         </div>
       </div>
     </dialog>
     <div class="toast" id="toast" role="status"></div>
-    <script src="app.js"></script>
+    <script src="app.js?v=a3"></script>
   </body>
 </html>

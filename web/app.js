@@ -1,5 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const paths = {
+  search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>',
   dashboard:
     '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   tasks: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8m-8 4h8m-8 4h5"/>',
@@ -45,7 +46,10 @@ let tasks = [],
   pendingConfirm,
   toastTimer,
   revision = 0;
-let tab = "dashboard";
+let tab = "tasks";
+let selectedTask = null;
+let selectedRecord = null;
+let sentenceEnd = null;
 let desktopFiles = false;
 const audio = $("#player");
 function duration(seconds) {
@@ -127,21 +131,23 @@ function empty(iconName, title, sub) {
 }
 function identity(iconName, title, sub) {
   return (
-    '<div class="identity"><span class="record-icon"><i data-icon="' +
+    '<span class="identity"><span class="record-icon"><i data-icon="' +
     iconName +
     '">' +
     icon(iconName) +
-    "</i></span><div><strong>" +
+    '</i></span><span class="identity-copy"><strong>' +
     esc(title) +
     '</strong><span class="sub">' +
     esc(sub) +
-    "</span></div></div>"
+    "</span></span></span>"
   );
+}
+function recordingLabel(r) {
+  if (r.status === "completed") return transcriptStates[r.transcript_status || "unavailable"];
+  return r.status === "failed" ? "录制失败" : "录制中";
 }
 function recRow(r) {
   const st = r.transcript_status || "unavailable";
-  const status =
-    r.status === "completed" ? transcriptStates[st] : r.status === "failed" ? "录制失败" : "录制中";
   const tone = [r.status, st].includes("failed")
     ? "failed"
     : ["queued", "running"].includes(st) || r.status === "recording"
@@ -154,7 +160,7 @@ function recRow(r) {
       r.task_name || "任务 #" + r.task_id,
       [r.start_time, duration(r.duration), size(r.file_size)].join(" · "),
     ) +
-    badge(status, tone) +
+    badge(recordingLabel(r), tone) +
     action("read", st === "completed" ? "查看文稿" : "录音详情", r.id) +
     "</article>"
   );
@@ -162,48 +168,111 @@ function recRow(r) {
 function freq(t) {
   return t.interval_minutes ? "每 " + t.interval_minutes + " 分钟" : "计划 " + t.cron;
 }
-function taskRow(t) {
-  const sub = [
-    t.anchor_name || "抖音",
-    freq(t),
+function taskStatus(t) {
+  if (!t.running) return t.enabled ? "已启用" : "已停用";
+  if (!t.capturing) return "检查开播中";
+  return t.paused ? "已暂停" : "录制中";
+}
+function renderTaskList() {
+  const query = $("#task-search").value.trim().toLowerCase();
+  const visible = tasks.filter((t) =>
+    [t.name, t.anchor_name].some((n) => n?.toLowerCase().includes(query)),
+  );
+  $("#task-count").textContent = tasks.length;
+  updateHTML(
+    "#task-list",
+    visible
+      .map(
+        (t) =>
+          '<button class="task-item" data-action="select-task" data-id="' +
+          t.id +
+          '" aria-pressed="' +
+          (t.id === selectedTask) +
+          '">' +
+          identity("audio", t.name, taskStatus(t) + " · " + t.recording_count + " 条录音") +
+          "</button>",
+      )
+      .join("") || empty("tasks", tasks.length ? "没有匹配的任务" : "还没有录制任务", ""),
+  );
+}
+function renderWorkspace() {
+  renderTaskList();
+  const t = tasks.find((t) => t.id === selectedTask);
+  $("#task-detail").hidden = !t;
+  $("#task-empty").hidden = Boolean(t);
+  if (!t) {
+    clearReader();
+    updateHTML(
+      "#task-empty",
+      empty("tasks", "添加第一个录制任务", "点击右上角「新建任务」，填写主播主页和检查频率。"),
+    );
+    return;
+  }
+  $("#task-title").textContent = t.name;
+  const windowLabel =
     t.scan_start || t.scan_end
       ? (t.scan_start || "不限") +
         " 至 " +
         (t.scan_end || "不限") +
-        (t.scan_end && t.scan_start > t.scan_end ? "（次日）" : "")
-      : "全天",
-    t.recording_count + " 条录音",
+        (t.scan_start && t.scan_end && t.scan_start > t.scan_end ? "（次日）" : "")
+      : "全天";
+  $("#task-meta").textContent = [
+    t.anchor_name || "抖音直播",
+    freq(t),
+    windowLabel,
+    taskStatus(t),
   ].join(" · ");
-  const st = t.running
-    ? t.capturing
-      ? t.paused
-        ? "已暂停"
-        : "录制中"
-      : "检查开播中"
-    : t.enabled
-      ? "已启用"
-      : "已停用";
+  $("#task-result").hidden = t.running || !t.last_result;
+  $("#task-result").textContent = t.last_result ? "最近检查 · " + t.last_result : "";
   const controls = t.running
     ? t.capturing
       ? action(t.paused ? "resume" : "pause", t.paused ? "恢复" : "暂停", t.id) +
         action("stop", "停止", t.id)
-      : ""
-    : action("run", "立即检查", t.id) +
-      action("edit", "编辑", t.id) +
+      : badge("正在检查开播", "busy")
+    : action("edit", "编辑", t.id) +
+      action("run", "立即检查", t.id, "primary") +
+      '<details class="more"><summary aria-label="更多任务操作">•••</summary><div>' +
       action("toggle", t.enabled ? "停用" : "启用", t.id) +
-      action("delete-task", "删除", t.id);
-  return (
-    '<article class="row">' +
-    identity("tasks", t.name, sub) +
-    badge(st, t.running ? "busy" : "neutral") +
-    '<div class="actions">' +
-    controls +
-    "</div>" +
-    (!t.running && t.last_result
-      ? '<small class="last-result">最近检查 · ' + esc(t.last_result) + "</small>"
-      : "") +
-    "</article>"
+      action("delete-task", "删除", t.id, "danger") +
+      "</div></details>";
+  updateHTML("#task-actions", controls);
+  $("#record-count").textContent = "（" + records.length + "）";
+  const record = records.find((r) => r.id === selectedRecord) || records[0];
+  $("#task-record").hidden = !record;
+  $("#record-empty").hidden = Boolean(record);
+  if (!record) {
+    clearReader();
+    updateHTML(
+      "#record-empty",
+      empty("audio", "此任务暂无录音", "定时检查或点击「立即检查」，开播后自动录制。"),
+    );
+    return;
+  }
+  updateHTML(
+    "#task-record",
+    records
+      .map((r) => {
+        return (
+          '<option value="' +
+          r.id +
+          '">' +
+          esc(r.start_time + " · " + recordingLabel(r)) +
+          "</option>"
+        );
+      })
+      .join(""),
   );
+  if ($("#task-record").value !== String(record.id)) $("#task-record").value = record.id;
+  if (
+    !reading ||
+    reading.id !== record.id ||
+    reading.status !== record.status ||
+    reading.file_url !== record.file_url
+  ) {
+    openReader(record, true);
+  } else if (record.transcript_status && readerState !== record.transcript_status) {
+    loadTranscript();
+  }
 }
 async function refresh() {
   const current = ++revision;
@@ -215,7 +284,9 @@ async function refresh() {
         ? api("dashboard")
         : tab === "recordings"
           ? api("recordings" + (filter ? "?task_id=" + encodeURIComponent(filter) : ""))
-          : Promise.resolve(null),
+          : selectedTask
+            ? api("recordings?task_id=" + selectedTask)
+            : Promise.resolve([]),
     ]);
     if (current !== revision) return;
     tasks = all;
@@ -223,15 +294,18 @@ async function refresh() {
       '<option value="">全部任务</option>' +
       tasks.map((t) => '<option value="' + t.id + '">' + esc(t.name) + "</option>").join("");
     updateHTML("#filter-task", options);
-    $("#filter-task").value = tasks.some((t) => String(t.id) === filter) ? filter : "";
+    const nextFilter = tasks.some((t) => String(t.id) === filter) ? filter : "";
+    if ($("#filter-task").value !== nextFilter) $("#filter-task").value = nextFilter;
     if (filter && !$("#filter-task").value && tab === "recordings") return refresh();
     if (tab === "tasks") {
-      $("#task-count").textContent = tasks.length + " 个任务";
-      updateHTML(
-        "#task-list",
-        tasks.map(taskRow).join("") ||
-          empty("tasks", "还没有录制任务", "点击「新建任务」，添加要关注的主播。"),
-      );
+      if (tasks.length && !tasks.some((t) => t.id === selectedTask)) {
+        selectedTask = tasks[0].id;
+        selectedRecord = null;
+        return refresh();
+      }
+      if (!tasks.length) selectedTask = null;
+      records = data;
+      renderWorkspace();
     } else if (tab === "dashboard") {
       const run = data.running_tasks;
       updateHTML(
@@ -283,7 +357,7 @@ async function refresh() {
           empty("library", "暂无匹配的录音", "可检查筛选条件或前往录制任务。"),
       );
     }
-    if (reading?.status === "recording") {
+    if (tab !== "tasks" && reading?.status === "recording") {
       const latest = records.find((r) => r.id === reading.id);
       if (latest && latest.status !== "recording") openReader(latest);
     }
@@ -297,21 +371,25 @@ async function refresh() {
 }
 function navigate() {
   const key = location.hash.slice(1);
-  tab = Object.hasOwn(titles, key) ? key : "dashboard";
+  if ($("#reader").open) $("#reader").close();
+  clearReader();
+  tab = Object.hasOwn(titles, key) ? key : "tasks";
   for (const link of document.querySelectorAll("[data-tab]")) {
     link.dataset.tab === tab
       ? link.setAttribute("aria-current", "page")
       : link.removeAttribute("aria-current");
     $("#page-" + link.dataset.tab).hidden = link.dataset.tab !== tab;
   }
-  $("#page-title").textContent = titles[tab];
   document.title = titles[tab] + " · 声序";
   refresh();
 }
 async function status() {
   try {
     const s = await api("status");
-    desktopFiles = s.desktop_files;
+    if (desktopFiles !== s.desktop_files) {
+      desktopFiles = s.desktop_files;
+      if (reading) renderFileActions(reading);
+    }
     $("[data-action=folder]").hidden = !desktopFiles;
     const modes = { browser: "浏览器采集", system: "系统声卡", loopback: "系统回环" };
     $("#status-bar").textContent =
@@ -330,8 +408,11 @@ async function editor(t) {
   $("#editor-title").textContent = t ? "编辑任务" : "新建任务";
   $("#form-error").hidden = true;
   $("#f-platform").replaceChildren(...platforms.map((p) => new Option(p.label, p.name)));
-  $("#f-frequency").replaceChildren(...intervalOptions.map((n) => new Option("每 " + n + " 分钟", n)));
-  if (t && !t.interval_minutes) $("#f-frequency").add(new Option("保留原计划 · " + t.cron, "legacy"));
+  $("#f-frequency").replaceChildren(
+    ...intervalOptions.map((n) => new Option("每 " + n + " 分钟", n)),
+  );
+  if (t && !t.interval_minutes)
+    $("#f-frequency").add(new Option("保留原计划 · " + t.cron, "legacy"));
   $("#f-frequency").value = t ? t.interval_minutes || "legacy" : 10;
   for (const [field, key] of Object.entries({
     name: "name",
@@ -364,7 +445,14 @@ $("#task-form").onsubmit = async (event) => {
       throw new Error("请填写抖音主播主页，例如 https://www.douyin.com/user/…");
     const value = $("#f-frequency").value;
     if (value !== "legacy") body.interval_minutes = Number(value);
-    await api(editing ? "tasks/" + editing.id : "tasks", editing ? "PUT" : "POST", body);
+    const saved = await api(
+      editing ? "tasks/" + editing.id : "tasks",
+      editing ? "PUT" : "POST",
+      body,
+    );
+    selectedTask = editing ? editing.id : saved.id;
+    selectedRecord = null;
+    $("#task-search").value = "";
     $("#editor").close();
     location.hash = "tasks";
     await refresh();
@@ -399,7 +487,34 @@ let sentenceButtons = [];
 let highlighted;
 let manuscript = "";
 
-function openReader(r) {
+function clearReader() {
+  reading = null;
+  readerState = null;
+  sentenceEnd = null;
+  if (audio.hasAttribute("src")) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }
+  $("#reader-content").hidden = true;
+}
+function renderFileActions(r) {
+  const links =
+    (r.file_url
+      ? '<a download href="' +
+        esc(r.file_url) +
+        '">下载音频</a>' +
+        (desktopFiles ? action("open", "系统播放", r.id) + action("reveal", "定位文件", r.id) : "")
+      : "") + (r.status !== "recording" ? action("delete-rec", "删除录音", r.id, "danger") : "");
+  updateHTML("#file-actions", links);
+}
+function openReader(r, inline = false) {
+  clearReader();
+  const content = $("#reader-content");
+  (inline ? $("#inline-reader") : $("#reader-home")).append(content);
+  content.hidden = false;
+  $("#paragraph-view").setAttribute("aria-pressed", "true");
+  $("#speech-map").hidden = true;
   sentenceButtons = [];
   highlighted = null;
   manuscript = "";
@@ -418,28 +533,24 @@ function openReader(r) {
   ]
     .filter(Boolean)
     .join(" · ");
-  audio.hidden = !r.file_url;
+  $("#audio-panel").hidden = !r.file_url;
   if (r.file_url) audio.src = r.file_url;
-  $("#file-actions").innerHTML =
-    (r.file_url
-      ? '<a download href="' +
-        esc(r.file_url) +
-        '">下载音频</a>' +
-        (desktopFiles ? action("open", "系统播放", r.id) + action("reveal", "定位文件", r.id) : "")
-      : "") + (r.status !== "recording" ? action("delete-rec", "删除录音", r.id, "danger") : "");
+  renderFileActions(r);
   $("#transcript-status").textContent =
     r.status === "recording"
       ? "录制结束后将自动转写"
       : r.status === "failed"
-        ? r.error || "录制失败"
+        ? "本次录制失败" + (r.error ? " · " + r.error : "")
         : "正在读取转写状态…";
   $("#transcript-body").replaceChildren();
-  if (!$("#reader").open) $("#reader").showModal();
+  if (!inline && !$("#reader").open) $("#reader").showModal();
   if (r.status === "completed") loadTranscript();
 }
+let pendingTranscript = null;
 async function loadTranscript() {
   const rec = reading;
-  if (!rec || rec.status !== "completed") return;
+  if (!rec || rec.status !== "completed" || pendingTranscript === rec) return;
+  pendingTranscript = rec;
   try {
     const data = await api("recordings/" + rec.id + "/transcript");
     if (reading !== rec) return;
@@ -449,16 +560,26 @@ async function loadTranscript() {
     $("#transcript-status").textContent =
       data.status === "completed"
         ? groups.length
-          ? label + " · " + groups.length + " 段 · " + groups.reduce((n, g) => n + g.length, 0) + " 句"
+          ? label +
+            " · " +
+            groups.length +
+            " 段 · " +
+            groups.reduce((n, g) => n + g.length, 0) +
+            " 句"
           : "转写完成，未识别到语音。"
         : data.status === "failed"
           ? "转写失败 · " + data.error
           : data.status === "running"
             ? data.processed
               ? "正在转写 · 已处理至 " + duration(data.processed)
-              : "正在转写，可关闭窗口，稍后从资料库查看。"
+              : "正在识别语音，完成后将自动显示文稿。"
             : label;
     $("#asr-progress").hidden = data.status !== "running";
+    const progress = $("#asr-progress");
+    if (data.status === "running" && data.processed > 0 && rec.duration > 0) {
+      progress.max = rec.duration;
+      progress.value = Math.min(data.processed, rec.duration);
+    } else progress.removeAttribute("value");
     if (data.status === "completed") {
       $("#reader-tools").hidden = !groups.length;
       $("#sentence-view").hidden = !rec.file_url;
@@ -475,7 +596,25 @@ async function loadTranscript() {
           return `<div class="passage"><time>${duration(group[0].start)}</time><p>${lines}</p></div>`;
         })
         .join("");
-      sentenceButtons = Array.from(document.querySelectorAll(".sentence"));
+      sentenceButtons = Array.from($("#transcript-body").querySelectorAll(".sentence"));
+      const map = $("#speech-map");
+      const ctx = map.getContext("2d");
+      if (ctx && groups.length && rec.duration > 0) {
+        ctx.clearRect(0, 0, map.width, map.height);
+        ctx.fillStyle = "#bad7ed";
+        const scale = map.width / rec.duration;
+        for (const group of groups) {
+          for (const line of group) {
+            ctx.fillRect(
+              line.start * scale,
+              10,
+              Math.max(1, (line.end - line.start) * scale - 1),
+              10,
+            );
+          }
+        }
+        map.hidden = false;
+      }
     } else {
       $("#transcript-body").innerHTML =
         ["unavailable", "failed"].includes(data.status) && rec.file_exists
@@ -487,12 +626,18 @@ async function loadTranscript() {
       readerState = null;
       $("#transcript-status").textContent = "读取失败，将自动重试。" + e.message;
     }
+  } finally {
+    if (pendingTranscript === rec) pendingTranscript = null;
   }
 }
-$("#sentence-view").onclick = (event) => {
-  const enabled = $("#transcript-body").classList.toggle("sentences");
-  event.currentTarget.setAttribute("aria-pressed", String(enabled));
-};
+function sentenceMode(enabled) {
+  $("#transcript-body").classList.toggle("sentences", enabled);
+  $("#sentence-view").setAttribute("aria-pressed", String(enabled));
+  $("#paragraph-view").setAttribute("aria-pressed", String(!enabled));
+  sentenceEnd = null;
+}
+$("#sentence-view").onclick = () => sentenceMode(true);
+$("#paragraph-view").onclick = () => sentenceMode(false);
 $("#copy-text").onclick = async () => {
   try {
     if (navigator.clipboard?.writeText) {
@@ -500,7 +645,7 @@ $("#copy-text").onclick = async () => {
     } else {
       const field = document.createElement("textarea");
       field.value = manuscript;
-      $("#reader").append(field);
+      $("#reader-content").append(field);
       field.select();
       const copied = document.execCommand("copy");
       field.remove();
@@ -512,7 +657,14 @@ $("#copy-text").onclick = async () => {
     $("#transcript-status").textContent = "无法访问剪贴板，请选择文稿后复制。";
   }
 };
+audio.onplay = () => {
+  if (tab === "tasks" && reading) selectedRecord = reading.id;
+};
 audio.ontimeupdate = () => {
+  if (sentenceEnd !== null && audio.currentTime >= sentenceEnd) {
+    audio.pause();
+    sentenceEnd = null;
+  }
   let left = 0,
     right = sentenceButtons.length;
   while (left < right) {
@@ -529,13 +681,18 @@ audio.ontimeupdate = () => {
   }
 };
 $("#reader").onclose = () => {
-  reading = null;
-  audio.pause();
-  audio.removeAttribute("src");
-  audio.load();
+  if (!$("#reader").open && $("#reader-home").contains($("#reader-content"))) clearReader();
 };
 async function operate(name, id) {
   const t = tasks.find((t) => t.id === id);
+  if (name === "select-task") {
+    if (selectedTask === id) return;
+    selectedTask = id;
+    selectedRecord = null;
+    records = [];
+    renderWorkspace();
+    return refresh();
+  }
   if (name === "edit") return editor(t);
   if (name === "read") return openReader(records.find((r) => r.id === id));
   if (name === "refresh") return refresh();
@@ -562,7 +719,8 @@ async function operate(name, id) {
   if (name === "delete-rec")
     return confirmAction("删除录音", "本地音频和转写文稿将一并删除。", async () => {
       await api("recordings/" + id, "DELETE");
-      $("#reader").close();
+      if ($("#reader").open) $("#reader").close();
+      clearReader();
     });
   if (name === "stop")
     return confirmAction("停止录制", "保存已录音频后，系统会自动开始转写。", () =>
@@ -583,6 +741,9 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (b.classList.contains("sentence")) {
+    sentenceEnd = $("#transcript-body").classList.contains("sentences")
+      ? Number(b.dataset.end)
+      : null;
     audio.currentTime = Number(b.dataset.start);
     try {
       await audio.play();
@@ -592,15 +753,38 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (b.id !== "btn-add" && !b.dataset.action) return;
-  b.disabled = true;
+  if (b.closest(".more")) {
+    closeMore();
+    $("#task-actions summary")?.focus();
+  }
+  if (b.dataset.action !== "select-task") b.disabled = true;
   try {
     if (b.id === "btn-add") await editor();
     else await operate(b.dataset.action, Number(b.dataset.id));
   } catch (e) {
-    if (reading) $("#transcript-status").textContent = e.message;
+    if ($("#reader").open) $("#transcript-status").textContent = e.message;
     else notify(e.message);
   } finally {
     b.disabled = false;
+  }
+});
+$("#task-search").oninput = renderTaskList;
+$("#task-record").onchange = (event) => {
+  selectedRecord = Number(event.target.value);
+  renderWorkspace();
+};
+function closeMore() {
+  const more = document.querySelector(".more[open]");
+  if (more) more.open = false;
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".more") || e.target.closest(".more button")) closeMore();
+});
+document.addEventListener("keydown", (e) => {
+  const more = document.querySelector(".more[open]");
+  if (e.key === "Escape" && more) {
+    closeMore();
+    more.querySelector("summary").focus();
   }
 });
 $("#filter-task").onchange = refresh;
