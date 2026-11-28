@@ -1,5 +1,11 @@
 const $ = (selector) => document.querySelector(selector);
 const paths = {
+  play: '<path d="m8 5 11 7-11 7z" fill="currentColor" stroke="none"/>',
+  pause: '<path d="M9 6v12m6-12v12" stroke-width="3"/>',
+  volume: '<path d="M3 9h4l5-4v14l-5-4H3zM16 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
+  muted: '<path d="M3 9h4l5-4v14l-5-4H3zM16 9l5 6m0-6-5 6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  dots: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>',
   dashboard:
     '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -174,6 +180,7 @@ function taskStatus(t) {
   return t.paused ? "已暂停" : "录制中";
 }
 function renderTaskList() {
+  $("#clear-search").hidden = !$("#task-search").value;
   const query = $("#task-search").value.trim().toLowerCase();
   const visible = tasks.filter((t) =>
     [t.name, t.anchor_name].some((n) => n?.toLowerCase().includes(query)),
@@ -231,7 +238,9 @@ function renderWorkspace() {
       : badge("正在检查开播", "busy")
     : action("edit", "编辑", t.id) +
       action("run", "立即检查", t.id, "primary") +
-      '<details class="more"><summary aria-label="更多任务操作">•••</summary><div>' +
+      '<details class="more"><summary aria-label="更多任务操作">' +
+      icon("dots") +
+      "</summary><div>" +
       action("toggle", t.enabled ? "停用" : "启用", t.id) +
       action("delete-task", "删除", t.id, "danger") +
       "</div></details>";
@@ -241,6 +250,7 @@ function renderWorkspace() {
   $("#task-record").hidden = !record;
   $("#record-empty").hidden = Boolean(record);
   if (!record) {
+    if (choiceOwner === $("#task-record")) closeChoice();
     clearReader();
     updateHTML(
       "#record-empty",
@@ -248,21 +258,11 @@ function renderWorkspace() {
     );
     return;
   }
-  updateHTML(
-    "#task-record",
-    records
-      .map((r) => {
-        return (
-          '<option value="' +
-          r.id +
-          '">' +
-          esc(r.start_time + " · " + recordingLabel(r)) +
-          "</option>"
-        );
-      })
-      .join(""),
+  setChoices(
+    $("#task-record"),
+    records.map((r) => [r.id, r.start_time + " · " + recordingLabel(r)]),
+    record.id,
   );
-  if ($("#task-record").value !== String(record.id)) $("#task-record").value = record.id;
   if (
     !reading ||
     reading.id !== record.id ||
@@ -290,12 +290,7 @@ async function refresh() {
     ]);
     if (current !== revision) return;
     tasks = all;
-    const options =
-      '<option value="">全部任务</option>' +
-      tasks.map((t) => '<option value="' + t.id + '">' + esc(t.name) + "</option>").join("");
-    updateHTML("#filter-task", options);
-    const nextFilter = tasks.some((t) => String(t.id) === filter) ? filter : "";
-    if ($("#filter-task").value !== nextFilter) $("#filter-task").value = nextFilter;
+    setChoices($("#filter-task"), [["", "全部任务"], ...tasks.map((t) => [t.id, t.name])], filter);
     if (filter && !$("#filter-task").value && tab === "recordings") return refresh();
     if (tab === "tasks") {
       if (tasks.length && !tasks.some((t) => t.id === selectedTask)) {
@@ -401,48 +396,103 @@ async function status() {
     $(".system").classList.remove("ready");
   }
 }
+const clockUnits = [24, 60].map((max) =>
+  Array.from({ length: max }, (_, i) => {
+    const digits = String(i).padStart(2, "0");
+    return [digits, digits];
+  }),
+);
+function setClock(field, value) {
+  field.dataset.time = value;
+  const parts = value.split(":");
+  field.querySelectorAll(".choice").forEach((button, i) => {
+    setChoices(button, [["", i === 0 ? "时" : "分"], ...clockUnits[i]], parts[i] || "");
+  });
+  field.querySelector(".clear-clock").disabled = !value;
+}
+for (const field of document.querySelectorAll(".clock-field")) {
+  const label = document.getElementById(field.getAttribute("aria-labelledby")).textContent;
+  field.innerHTML =
+    '<i data-icon="clock">' +
+    icon("clock") +
+    "</i>" +
+    '<button type="button" class="choice" aria-label="' +
+    label +
+    '小时"></button><span aria-hidden="true">:</span>' +
+    '<button type="button" class="choice" aria-label="' +
+    label +
+    '分钟"></button>' +
+    '<button type="button" class="clear-clock" aria-label="清除' +
+    label +
+    '时间">' +
+    icon("close") +
+    "</button>";
+  field.onchange = (event) => {
+    const parts = [...field.querySelectorAll(".choice")].map((button) => button.value || "00");
+    setClock(field, event.target.value ? parts.join(":") : "");
+  };
+  field.querySelector(".clear-clock").onclick = () => {
+    setClock(field, "");
+    field.querySelector(".choice").focus();
+  };
+}
+function invalidField(field, message) {
+  field.closest("label").after($("#form-error"));
+  field.setAttribute("aria-invalid", "true");
+  field.setAttribute("aria-describedby", "form-error");
+  field.focus();
+  throw new Error(message);
+}
+
 async function editor(t) {
   const platforms = await api("platforms");
   editing = t;
   $("#task-form").reset();
+  $("#task-form .form-body").append($("#form-error"));
   $("#editor-title").textContent = t ? "编辑任务" : "新建任务";
   $("#form-error").hidden = true;
-  $("#f-platform").replaceChildren(...platforms.map((p) => new Option(p.label, p.name)));
-  $("#f-frequency").replaceChildren(
-    ...intervalOptions.map((n) => new Option("每 " + n + " 分钟", n)),
+  setChoices(
+    $("#f-platform"),
+    platforms.map((p) => [p.name, p.label]),
+    t?.platform,
   );
-  if (t && !t.interval_minutes)
-    $("#f-frequency").add(new Option("保留原计划 · " + t.cron, "legacy"));
-  $("#f-frequency").value = t ? t.interval_minutes || "legacy" : 10;
-  for (const [field, key] of Object.entries({
-    name: "name",
-    home: "anchor_home",
-    platform: "platform",
-    anchor: "anchor_name",
-    "scan-start": "scan_start",
-    "scan-end": "scan_end",
-  })) {
-    if (t) $("#f-" + field).value = t[key] || "";
+  const frequencies = intervalOptions.map((n) => [n, "每 " + n + " 分钟"]);
+  if (t && !t.interval_minutes) frequencies.push(["legacy", "保留原计划 · " + t.cron]);
+  setChoices($("#f-frequency"), frequencies, t ? t.interval_minutes || "legacy" : 10);
+  $("#f-name").value = t?.name || "";
+  $("#f-home").value = t?.anchor_home || "";
+  $("#f-anchor").value = t?.anchor_name || "";
+  setClock($("#f-scan-start"), t?.scan_start || "");
+  setClock($("#f-scan-end"), t?.scan_end || "");
+  for (const field of $("#task-form").querySelectorAll("[aria-invalid]")) {
+    field.removeAttribute("aria-invalid");
+    field.removeAttribute("aria-describedby");
   }
   $("#editor").showModal();
 }
+$("#task-form").oninput = (event) => {
+  event.target.removeAttribute("aria-invalid");
+  event.target.removeAttribute("aria-describedby");
+  $("#form-error").hidden = true;
+};
 $("#task-form").onsubmit = async (event) => {
   event.preventDefault();
   const button = event.submitter;
   button.disabled = true;
   try {
+    $("#task-form .form-body").append($("#form-error"));
     const home = $("#f-home").value.trim();
     const body = {
       name: $("#f-name").value.trim(),
       anchor_home: home,
       anchor_name: $("#f-anchor").value.trim(),
       platform: $("#f-platform").value,
-      scan_start: $("#f-scan-start").value,
-      scan_end: $("#f-scan-end").value,
+      scan_start: $("#f-scan-start").dataset.time,
+      scan_end: $("#f-scan-end").dataset.time,
     };
-    if (!body.name) throw new Error("请输入任务名称");
+    if (!body.name) invalidField($("#f-name"), "请输入任务名称");
     if (!/^https?:\/\/(www\.)?douyin\.com\/user\/[^/?#]+(?:[/?#]|$)/i.test(home))
-      throw new Error("请填写抖音主播主页，例如 https://www.douyin.com/user/…");
+      invalidField($("#f-home"), "请填写抖音主播主页，例如 https://www.douyin.com/user/…");
     const value = $("#f-frequency").value;
     if (value !== "legacy") body.interval_minutes = Number(value);
     const saved = await api(
@@ -657,6 +707,69 @@ $("#copy-text").onclick = async () => {
     $("#transcript-status").textContent = "无法访问剪贴板，请选择文稿后复制。";
   }
 };
+const rates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+function syncTransport() {
+  const total = Number.isFinite(audio.duration) ? audio.duration : 0;
+  const track = $("#play-position");
+  track.disabled = !total;
+  track.max = total;
+  track.value = audio.currentTime || 0;
+  track.style.setProperty("--fill", (total ? (100 * audio.currentTime) / total : 0) + "%");
+  track.setAttribute("aria-valuetext", duration(audio.currentTime) + " / " + duration(total));
+  $("#play-duration").textContent = duration(total);
+  $("#play-time").textContent = duration(audio.currentTime);
+}
+function syncPlayButton() {
+  const button = $("#play-audio");
+  button.setAttribute("aria-label", audio.paused ? "播放录音" : "暂停回听");
+  button.innerHTML = icon(audio.paused ? "play" : "pause");
+}
+$("#play-audio").onclick = async () => {
+  sentenceEnd = null;
+  if (!audio.paused) return audio.pause();
+  try {
+    await audio.play();
+  } catch {
+    $("#transcript-status").textContent = "播放失败，请检查音频文件是否可用。";
+  }
+};
+$("#play-position").oninput = (event) => {
+  sentenceEnd = null;
+  audio.currentTime = Number(event.target.value);
+  syncTransport();
+};
+$("#mute").onclick = () => {
+  if (!audio.volume) {
+    audio.volume = 1;
+    audio.muted = false;
+  } else audio.muted = !audio.muted;
+};
+$("#volume").oninput = (event) => {
+  audio.volume = Number(event.target.value);
+  audio.muted = audio.volume === 0;
+};
+function syncVolume() {
+  const muted = audio.muted || audio.volume === 0;
+  $("#mute").setAttribute("aria-label", muted ? "取消静音" : "静音");
+  $("#mute").setAttribute("aria-pressed", String(muted));
+  $("#mute").innerHTML = icon(muted ? "muted" : "volume");
+  $("#volume").value = audio.muted ? 0 : audio.volume;
+  $("#volume").style.setProperty("--fill", $("#volume").value * 100 + "%");
+}
+audio.addEventListener("volumechange", syncVolume);
+syncVolume();
+$("#speed").onchange = (e) => {
+  audio.defaultPlaybackRate = audio.playbackRate = Number(e.target.value);
+};
+setChoices(
+  $("#speed"),
+  rates.map((rate) => [rate, rate + "×"]),
+  1,
+);
+for (const event of ["loadedmetadata", "durationchange", "emptied", "timeupdate"])
+  audio.addEventListener(event, syncTransport);
+for (const event of ["play", "pause", "ended", "emptied"])
+  audio.addEventListener(event, syncPlayButton);
 audio.onplay = () => {
   if (tab === "tasks" && reading) selectedRecord = reading.id;
 };
@@ -753,6 +866,17 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (b.id !== "btn-add" && !b.dataset.action) return;
+  const dialogId =
+    b.id === "btn-add" || b.dataset.action === "edit"
+      ? "editor"
+      : b.dataset.action === "read"
+        ? "reader"
+        : ["delete-task", "delete-rec", "stop"].includes(b.dataset.action)
+          ? "confirm-dialog"
+          : null;
+  if (dialogId)
+    document.getElementById(dialogId).returnFocus =
+      b.closest(".more")?.querySelector("summary") || b;
   if (b.closest(".more")) {
     closeMore();
     $("#task-actions summary")?.focus();
@@ -768,7 +892,22 @@ document.addEventListener("click", async (event) => {
     b.disabled = false;
   }
 });
+document.addEventListener(
+  "close",
+  (event) => {
+    const opener = event.target.returnFocus;
+    if (opener?.isConnected && opener.getClientRects().length)
+      opener.focus({ preventScroll: true });
+    delete event.target.returnFocus;
+  },
+  true,
+);
 $("#task-search").oninput = renderTaskList;
+$("#clear-search").onclick = () => {
+  $("#task-search").value = "";
+  renderTaskList();
+  $("#task-search").focus();
+};
 $("#task-record").onchange = (event) => {
   selectedRecord = Number(event.target.value);
   renderWorkspace();

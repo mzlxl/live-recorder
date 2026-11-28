@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f4f6fa" />
     <title>声序 · 直播录制工作台</title>
-    <link rel="stylesheet" href="style.css?v=a3" />
+    <link rel="stylesheet" href="style.css?v=controls-2" />
   </head>
   <body>
     <a class="skip" href="#main">跳至内容</a>
@@ -49,10 +49,13 @@
             <h2>录制任务</h2>
             <span class="meta" id="task-count"></span>
           </div>
-          <label class="task-search"
-            ><i data-icon="search"></i
-            ><input type="search" id="task-search" aria-label="查找任务" placeholder="查找任务"
-          /></label>
+          <div class="task-search">
+            <i data-icon="search"></i>
+            <input type="search" id="task-search" aria-label="查找任务" placeholder="查找任务" />
+            <button type="button" id="clear-search" aria-label="清空任务搜索" hidden>
+              <i data-icon="close"></i>
+            </button>
+          </div>
           <div id="task-list"></div>
           <div class="system">
             <span class="dot"></span><span id="status-bar">正在连接设备…</span>
@@ -72,7 +75,12 @@
             <p class="last-result" id="task-result" hidden></p>
             <div class="history">
               <label for="task-record">任务录音 <span id="record-count"></span></label
-              ><select id="task-record"></select>
+              ><button
+                type="button"
+                class="choice"
+                id="task-record"
+                aria-label="选择任务录音"
+              ></button>
             </div>
             <div id="inline-reader"></div>
             <div id="record-empty" hidden></div>
@@ -89,8 +97,8 @@
             <h2>录音资料库</h2>
             <div class="toolbar">
               <label class="sr" for="filter-task">按任务筛选</label
-              ><select id="filter-task">
-                <option value="">全部任务</option></select
+              ><button type="button" class="choice" id="filter-task" aria-label="按任务筛选">
+                全部任务</button
               ><button data-action="folder">打开目录</button
               ><button data-action="refresh" aria-label="刷新资料库">
                 <i data-icon="refresh"></i>
@@ -102,7 +110,7 @@
       </section>
     </main>
     <dialog id="editor" aria-labelledby="editor-title">
-      <form id="task-form">
+      <form id="task-form" novalidate>
         <header>
           <h2 id="editor-title">新建任务</h2>
           <button type="button" class="close" data-close aria-label="关闭">
@@ -119,15 +127,37 @@
               required
           /></label>
           <div class="pair">
-            <label>直播平台<select id="f-platform" required></select></label
-            ><label>主播名称（选填）<input id="f-anchor" /></label>
+            <div class="field">
+              <label for="f-platform">直播平台</label
+              ><button type="button" class="choice" id="f-platform"></button>
+            </div>
+            <label>主播名称（选填）<input id="f-anchor" /></label>
           </div>
-          <label>检查频率<select id="f-frequency" required></select></label>
+          <div class="field">
+            <label for="f-frequency">检查频率</label
+            ><button type="button" class="choice" id="f-frequency"></button>
+          </div>
           <fieldset>
             <legend>扫描时段</legend>
             <div class="pair">
-              <label>开始<input id="f-scan-start" type="time" /></label
-              ><label>结束<input id="f-scan-end" type="time" /></label>
+              <div class="field">
+                <span id="start-label">开始</span>
+                <div
+                  class="clock-field"
+                  id="f-scan-start"
+                  role="group"
+                  aria-labelledby="start-label"
+                ></div>
+              </div>
+              <div class="field">
+                <span id="end-label">结束</span>
+                <div
+                  class="clock-field"
+                  id="f-scan-end"
+                  role="group"
+                  aria-labelledby="end-label"
+                ></div>
+              </div>
             </div>
             <small>留空表示不限。结束时间早于开始时间时，扫描至次日。</small>
           </fieldset>
@@ -139,9 +169,14 @@
         </footer>
       </form>
     </dialog>
-    <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
       <form method="dialog">
-        <header><h2 id="confirm-title"></h2></header>
+        <header>
+          <h2 id="confirm-title"></h2>
+          <button type="button" class="close" data-close aria-label="关闭">
+            <i data-icon="close"></i>
+          </button>
+        </header>
         <div class="form-body">
           <p id="confirm-message"></p>
           <label class="check" hidden
@@ -176,7 +211,37 @@
                 hidden
               ></canvas>
             </div>
-            <audio controls preload="metadata" id="player"></audio>
+            <audio preload="metadata" id="player"></audio>
+            <div class="transport">
+              <button type="button" id="play-audio" aria-label="播放录音">
+                <i data-icon="play"></i>
+              </button>
+              <span class="elapsed" id="play-time">00:00</span>
+              <input
+                type="range"
+                id="play-position"
+                aria-label="播放进度"
+                min="0"
+                max="0"
+                step="0.1"
+                value="0"
+                disabled
+              />
+              <span id="play-duration">00:00</span>
+              <button type="button" id="mute" aria-label="静音" aria-pressed="false">
+                <i data-icon="volume"></i>
+              </button>
+              <input
+                type="range"
+                id="volume"
+                min="0"
+                max="1"
+                step="0.05"
+                value="1"
+                aria-label="音量"
+              />
+              <button type="button" id="speed" class="choice" aria-label="播放速度"></button>
+            </div>
           </div>
           <div id="record-meta" class="meta"></div>
           <div id="file-actions" class="toolbar"></div>
@@ -199,6 +264,7 @@
       </div>
     </dialog>
     <div class="toast" id="toast" role="status"></div>
-    <script src="app.js?v=a3"></script>
+    <script src="controls.js?v=controls-2"></script>
+    <script src="app.js?v=controls-2"></script>
   </body>
 </html>

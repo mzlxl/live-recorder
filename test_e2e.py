@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import uvicorn
+from opencc import OpenCC
 from playwright.sync_api import expect, sync_playwright
 
 import config
@@ -44,19 +45,53 @@ def isolated_service(work):
             thread.join(15)
 
 
+def pick(page, trigger, label):
+    trigger.click()
+    page.get_by_role("option", name=label, exact=True).click()
+
+
 def layouts(browser, url):
     page = browser.new_page(reduced_motion="reduce")
     for w, h in [(1920, 1080), (1440, 900), (375, 667), (844, 390), (768, 1024)]:
         page.set_viewport_size({"width": w, "height": h})
         page.goto(url)
+        page.locator("#task-search").fill("验收搜索")
+        page.get_by_role("button", name="清空任务搜索").click()
+        expect(page.locator("#task-search")).to_be_focused()
+        expect(page.locator("#task-search")).to_have_value("")
         for key in ("tasks", "recordings", "dashboard"):
             page.locator(f"[data-tab={key}]").click()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         page.locator("#btn-add").click()
         expect(page.locator("#f-name")).to_be_focused()
         assert page.locator("#editor").evaluate("(d)=>d.scrollWidth <= d.clientWidth")
+        frequency = page.locator("#f-frequency")
+        frequency.click()
+        page.keyboard.press("End")
+        page.keyboard.press("Enter")
+        expect(frequency).to_have_text("每 120 分钟")
+        hours = page.get_by_role("combobox", name="开始小时")
+        pick(page, hours, "23")
+        expect(hours).to_have_text("23")
+        minutes = page.get_by_role("combobox", name="开始分钟")
+        minutes.click()
+        page.keyboard.press("5")
+        page.keyboard.press("9")
+        page.keyboard.press("Enter")
+        expect(minutes).to_have_text("59")
+        page.get_by_role("button", name="清除开始时间").click()
+        expect(hours).to_have_text("时")
+        page.locator("#f-platform").click()
+        expect(page.get_by_role("listbox")).to_be_visible()
+        rect = page.get_by_role("listbox").bounding_box()
+        assert rect["x"] >= 0 and rect["x"] + rect["width"] <= w + 1
+        assert rect["y"] >= 0 and rect["y"] + rect["height"] <= h + 1
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("listbox")).not_to_be_visible()
+        expect(page.locator("#editor")).to_be_visible()
         page.keyboard.press("Escape")
         expect(page.locator("#editor")).not_to_be_visible()
+        expect(page.locator("#btn-add")).to_be_focused()
     page.close()
 
 
@@ -71,15 +106,15 @@ def verify_live(browser, url, profile, work):
     expect(page.locator("#f-name")).to_be_focused()
     page.locator("#f-name").fill("企智直播 · 自动验收")
     page.locator("#f-home").fill(profile)
-    page.locator("#f-frequency").select_option("120")
-    page.locator("#f-scan-start").fill("22:00")
-    page.locator("#f-scan-end").fill("01:00")
+    pick(page, page.locator("#f-frequency"), "每 120 分钟")
+    pick(page, page.get_by_role("combobox", name="开始小时"), "22")
+    pick(page, page.get_by_role("combobox", name="结束小时"), "01")
     page.get_by_text("保存任务", exact=True).click()
     expect(page.locator("#task-meta")).to_contain_text("次日")
     page.get_by_role("button", name="编辑").click()
-    expect(page.locator("#f-frequency")).to_have_value("120")
-    page.locator("#f-scan-start").fill("")
-    page.locator("#f-scan-end").fill("")
+    expect(page.locator("#f-frequency")).to_have_text("每 120 分钟")
+    page.get_by_role("button", name="清除开始时间").click()
+    page.get_by_role("button", name="清除结束时间").click()
     page.get_by_text("保存任务", exact=True).click()
     page.locator("#task-actions summary").click()
     page.get_by_role("button", name="停用", exact=True).click()
@@ -103,11 +138,21 @@ def verify_live(browser, url, profile, work):
     page.locator("#sentence-view").click()
     page.locator("#inline-reader .sentence").first.click()
     page.wait_for_function("()=>!player.paused && player.currentTime > 0.1")
+    page.get_by_role("button", name="暂停回听").click()
+    pick(page, page.locator("#speed"), "1.5×")
+    assert page.locator("#player").evaluate("p => p.paused && p.playbackRate === 1.5")
+    page.locator("#play-position").focus()
+    page.keyboard.press("End")
+    page.keyboard.press("Home")
+    page.get_by_role("button", name="播放录音").click()
+    page.wait_for_function("()=>!player.paused && player.currentTime > 0.1")
+    page.locator("#mute").click()
+    expect(page.locator("#mute")).to_have_attribute("aria-pressed", "true")
     page.locator("#paragraph-view").click()
     expect(page.locator("#paragraph-view")).to_have_attribute("aria-pressed", "true")
     print("PASS 正式工作台内联转写、逐句回听与段落切换", flush=True)
     page.locator("[data-tab=recordings]").click()
-    page.locator("#filter-task").select_option(index=1)
+    pick(page, page.locator("#filter-task"), "企智直播 · 自动验收")
     page.get_by_role("button", name="刷新资料库").click()
     page.wait_for_function("""()=>/等待转写|正在转写|文稿已就绪/.test(document.querySelector('#recording-list').textContent)""", timeout=45000)
     page.locator("#recording-list [data-action=read]").first.click()
@@ -119,6 +164,8 @@ def verify_live(browser, url, profile, work):
     expect(page.locator("#sentence-view")).to_have_attribute("aria-pressed", "true")
     page.locator("#copy-text").click()
     expect(page.locator("#transcript-status")).to_have_text("全文已复制")
+    copied = page.evaluate("navigator.clipboard.readText()")
+    assert copied.strip() and OpenCC("t2s").convert(copied) == copied
     page.locator(".sentence").last.click()
     page.wait_for_function("()=>!player.paused && player.currentTime > 0.1")
     with page.expect_download() as download:

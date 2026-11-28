@@ -1,4 +1,5 @@
 """以临时 SQLite 库验证录音完成、转写队列和时间戳。"""
+import json
 import tempfile
 import threading
 import unittest
@@ -59,6 +60,26 @@ class TranscriptTests(unittest.TestCase):
         self.assertEqual(db.claim_transcript()["recording_id"], self.rec)
         db.set_transcript_result(self.rec, "completed", "[]")
         self.assertEqual(db.get_transcript(self.rec)["paragraphs"], "[]")
+
+    def test_simplified_new_and_historical_transcripts(self):
+        from app.main import api_transcript
+
+        original = "我們研發的成本、利潤跟乾隆時期不同。OpenAI 22.5%"
+        simplified = "我们研发的成本、利润跟乾隆时期不同。OpenAI 22.5%"
+        segment = {"start": 2.35, "end": 6.71, "text": original}
+        expected = [[dict(segment, text=simplified)]]
+        self.assertEqual(transcription.paragraphs([segment]), expected)
+        self.assertEqual(transcription.paragraphs([dict(segment, text=simplified)]), expected)
+        self.assertEqual(transcription.paragraphs([]), [])
+
+        self.assertEqual(api_transcript(self.rec)["paragraphs"], [])
+        self.assertIsNone(db.get_transcript(self.rec)["paragraphs"])
+        db.finish_recording(self.rec, "sample.m4a", 10, 40)
+        db.claim_transcript()
+        saved = json.dumps([[segment]], ensure_ascii=False)
+        db.set_transcript_result(self.rec, "completed", saved)
+        self.assertEqual(api_transcript(self.rec)["paragraphs"], expected)
+        self.assertEqual(db.get_transcript(self.rec)["paragraphs"], saved)
 
     def test_sentence_times_and_paragraphs(self):
         parts = transcription.paragraphs([{"words":[

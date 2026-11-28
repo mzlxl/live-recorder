@@ -10,9 +10,15 @@ import tempfile
 import threading
 from pathlib import Path
 
+from opencc import OpenCC
+
 import config
 from app import db, executor
 from app.recorder import detect_ffmpeg
+
+
+# 两种推理后端共用字典。历史文稿在 API 读取时使用同一转换。
+simplified_text = OpenCC("t2s").convert
 
 
 def paragraphs(segments):
@@ -31,7 +37,7 @@ def paragraphs(segments):
             sentence += word["word"]
             if index + 1 < len(words) and not re.search(r"[。！？.!?][”’\"]?$", sentence.rstrip()):
                 continue
-            text = sentence.strip()
+            text = simplified_text(sentence.strip())
             sentence = ""
             if not text:
                 continue

@@ -250,6 +250,9 @@ def api_transcript(rec_id: int):
         raise HTTPException(404, "录音不存在")
     result = db.get_transcript(rec_id)
     result["paragraphs"] = json.loads(result["paragraphs"] or "[]")
+    for group in result["paragraphs"]:
+        for sentence in group:
+            sentence["text"] = transcription.simplified_text(sentence["text"])
     return result
 
 
